@@ -1,0 +1,43 @@
+---
+
+name: release
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  push:
+    name: "push"
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+        with:
+          submodules: true
+
+      - name: release
+        shell: bash
+        run: |
+          ./entrypoint build push
+        env:
+          TWINE_USERNAME: "__token__"
+          TWINE_PASSWORD: ${{ secrets.PYPI_TOKEN }}
+
+  release:
+    name: "release"
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+        with:
+          submodules: true
+
+      - name: release
+        shell: bash
+        run: |
+          ./entrypoint release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

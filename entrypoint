@@ -1,0 +1,83 @@
+#!/bin/bash
+
+# Global settings
+set -o pipefail
+SCRIPT_PATH=$(readlink -f "$0")
+SCRIPT_DIR=$(dirname "${SCRIPT_PATH}")
+
+# Potential semver version sources. Space separated.
+# shellcheck disable=SC2153
+VERSION_SOURCES="$GITHUB_REF"
+
+# GitHub repo information
+GITHUB_OWNER=archmachina
+GITHUB_REPO=bdast
+
+# shellcheck disable=SC1091
+. "${SCRIPT_DIR}/exec/exec_functions"
+
+# Determine version information
+echo "Version Sources: $VERSION_SOURCES"
+VERSION=$(get_semver_match < <(echo "$VERSION_SOURCES"))
+if [ "$VERSION" != "" ]; then
+  # Extract the components of the version
+  assert semver_extract "${VERSION}"
+
+  # Make sure we have valid semver information
+  assert_msg semver_full [ "$SEMVER_FULL" != "" ]
+
+  # Version that can be used in the build process when generating an image
+  BUILD_VERSION="${SEMVER_FULL}"
+
+  # The '+' character isn't valid in a docker tag name, so replace with an
+  # underscore.
+  SEMVER_FULL=${SEMVER_FULL//+/_/}
+
+  # Define all of the tags that will apply for this image
+  TAG_VERSIONS="$TAG_VERSIONS ${SEMVER_FULL}"
+  [ "$SEMVER_PRERELEASE" == "" ] && TAG_VERSIONS="$TAG_VERSIONS ${SEMVER_MAJOR}"
+  [ "$SEMVER_PRERELEASE" == "" ] && TAG_VERSIONS="$TAG_VERSIONS ${SEMVER_MAJOR}.${SEMVER_MINOR}"
+  [ "$SEMVER_PRERELEASE" == "" ] && TAG_VERSIONS="$TAG_VERSIONS ${SEMVER_MAJOR}.${SEMVER_MINOR}.${SEMVER_PATCH}"
+else
+  BUILD_VERSION="0.1.0"
+fi
+
+python3 -m venv "${SCRIPT_DIR}/env" || exit 1
+source "${SCRIPT_DIR}/env/bin/activate" || exit 1
+python3 -m pip install --upgrade pip || exit 1
+python3 -m pip install --upgrade setuptools build twine || exit 1
+
+while [ "$1" != "" ] ; do
+
+  COMMAND="$1"
+  shift
+
+  case "$COMMAND" in
+    build)
+      export BUILD_VERSION
+      assert python3 -m build
+      ;;
+
+    push)
+      assert python3 -m twine upload dist/*
+      ;;
+
+    release)
+      # Make sure we have valid version information
+      assert_msg version [ "$VERSION" != "" ]
+      assert_msg semver_full [ "$SEMVER_FULL" != "" ]
+
+      # Remove leading refs/tags/
+      VERSION="${VERSION#refs/tags/}"
+
+      # Determine if this is a prerelease
+      GITHUB_PRERELEASE='false'
+      [ "${SEMVER_PRERELEASE}" != "" ] && GITHUB_PRERELEASE='true'
+
+      # Create a new release on GitHub
+      assert github_release -o "${GITHUB_OWNER}" -r "${GITHUB_REPO}" -t "${VERSION}" -d false \
+        -p "${GITHUB_PRERELEASE}" -n "Version ${VERSION}" -a "${GITHUB_TOKEN}" -g
+  esac
+done
+
+exit 0
