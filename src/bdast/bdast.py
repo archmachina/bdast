@@ -15,12 +15,22 @@ def process_spec_v1_step_command(step, state, preprocess) -> int:
     logger = logging.getLogger(__name__)
 
     # Capture relevant properties for this step
+    step_type = step.get('type', '')
+    step_shell = step.get('shell', False)
     step_command = step.get('command', '')
     step_capture = step.get('capture', '')
-    step_interpreter = step.get('interpreter', 'builtinExec')
-    step_tempfile = step.get('tempfile', '')
+    step_interpreter = step.get('interpreter', '')
+    step_env = step.get('env', {})
 
     # Validate parameters
+    if step_shell is None or not isinstance(step_shell, bool):
+        logger.error('Invalid value on step shell')
+        return 1
+
+    if step_type is None or not isinstance(step_command, str) or step_command == '':
+        logger.error('Invalid value or empty step type')
+        return 1
+
     if step_command is None or not isinstance(step_command, str) or step_command == '':
         logger.error('Invalid value or empty step command')
         return 1
@@ -29,16 +39,12 @@ def process_spec_v1_step_command(step, state, preprocess) -> int:
         logger.error('Invalid value on step capture')
         return 1
 
-    if step_interpreter is None or not isinstance(step_interpreter, str) or step_interpreter == '':
+    if step_interpreter is None or not isinstance(step_interpreter, str):
         logger.error('Invalid value or empty step interpreter')
         return 1
 
-    if step_tempfile is None or not isinstance(step_tempfile, str):
-        logger.error('Invalid value on step use_tempfile')
-        return 1
-
-    if step_tempfile != 'file' and step_tempfile != 'stdin' and step_tempfile != '':
-        logger.error('Invalid type for tempfile. Must be file, stdin or empty')
+    if step_env is None or not isinstance(step_env, dict):
+        logger.error('Invalid value or empty step env')
         return 1
 
     # Remainder of the function is actual work, so return here
@@ -47,75 +53,57 @@ def process_spec_v1_step_command(step, state, preprocess) -> int:
 
     # Arguments to subprocess.run
     subprocess_args = {
-        'env': state['environ'],
+        'env': state['environ'].copy(),
         'stdout': None,
-        'stderr': subprocess.STDOUT
+        'stderr': subprocess.STDOUT,
+        'shell': step_shell
     }
+
+    # Merge environment variables in to this step environment
+    for key in step_env.keys():
+        subprocess_args['env'][key] = str(step_env[key])
 
     # If we're capturing, stdout should come back via pipe
     if step_capture != '':
         subprocess_args['stdout'] = subprocess.PIPE
 
-    # Determine custom call args and subprocess arguments for each interpreter type
-    tmp = None
-    sys.stdout.flush()
-    if step_interpreter == 'builtinExec':
-        call_args = shlex.split(step_command)
+    # Override interpreter if the type is bash or pwsh
+    if step_type == 'pwsh':
+        step_interpreter = 'pwsh -noni -c -'
+    elif step_type == 'bash':
+        step_interpreter = 'bash'
 
-        subprocess_args['stdin'] = subprocess.DEVNULL
-    elif step_interpreter == 'builtinShell':
-        call_args = step_command
-
-        subprocess_args['stdin'] = subprocess.DEVNULL
-        subprocess_args['shell'] = True
-    elif step_interpreter == 'builtinPwsh':
-        call_args = [ 'pwsh', '-noni', '-c', '-' ]
-
+    # If an interpreter is defined, this is the executable to call instead
+    if step_interpreter is not None and step_interpreter != '':
+        call_args = step_interpreter
         subprocess_args['text'] = True
         subprocess_args['input'] = step_command
     else:
-        call_args = shlex.split(step_interpreter)
+        call_args = step_command
+        subprocess_args['stdin'] = subprocess.DEVNULL
 
-        # A temporary file can be created as input for the interpreter and is appended to call args
-        if step_tempfile == 'file':
-            tmp = tempfile.NamedTemporaryFile(mode='w+')
-            subprocess_args['stdin'] = subprocess.DEVNULL
-            call_args = call_args + [ tmp.name ]
+    # If shell is not true, then we need to split the string for the call to subprocess.run
+    if not step_shell:
+        call_args = shlex.split(call_args)
 
-        elif step_tempfile == 'stdin':
-            tmp = tempfile.NamedTemporaryFile(mode='w+')
-            subprocess_args['stdin'] = tmp
+    logger.debug(f'Call arguments: {call_args}')
+    sys.stdout.flush()
+    proc = subprocess.run(call_args, **subprocess_args)
 
-        else:
-            subprocess_args['text'] = True
-            subprocess_args['input'] = step_command
+    # Check if the process failed
+    if proc.returncode != 0:
 
-    try:
-        # Write to the temp file, if required
-        if tmp is not None:
-            tmp.write(step_command)
-            tmp.flush()
-            tmp.seek(0)
+        # If the subprocess was called with stdout PIPE, output it here
+        if stdout is not None:
+            print(proc.stdout.decode('ascii'))
 
-        logger.debug(f'Call arguments: {call_args}')
-        proc = subprocess.run(call_args, **subprocess_args)
-
-        # Check if the process failed
-        if proc.returncode != 0:
-
-            # If the subprocess was called with stdout PIPE, output it here
-            if stdout is not None:
-                print(proc.stdout.decode('ascii'))
-
-            logger.error(f'Process exited with non-zero exit code: {proc.returncode}')
-        else:
-            # If we're capturing output from the step, put it in the environment now
-            if step_capture:
-                stdout_capture = proc.stdout.decode('ascii')
-                state['environ'][step_capture] = str(stdout_capture)
-    finally:
-        if tmp is not None:
-            tmp.close()
+        logger.error(f'Process exited with non-zero exit code: {proc.returncode}')
+    else:
+        # If we're capturing output from the step, put it in the environment now
+        if step_capture:
+            stdout_capture = proc.stdout.decode('ascii')
+            state['environ'][step_capture] = str(stdout_capture)
+            print(stdout_capture)
 
     return proc.returncode
 
@@ -140,7 +128,7 @@ def process_spec_v1_step(step, state, preprocess) -> int:
         logger.info(f'Processing step: {step_name}')
 
     # Determine which type of step this is and process
-    if step_type == 'command':
+    if step_type == 'command' or step_type == 'pwsh' or step_type == 'bash':
         return process_spec_v1_step_command(step, state, preprocess)
     else:
         logger.error(f'Unknown step type: {step_type}')
