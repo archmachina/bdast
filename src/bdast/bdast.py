@@ -22,6 +22,17 @@ def process_spec_v1_action(action_name, action, state, preprocess_only) -> int:
         logger.error(f'Action({action_name}): Invalid value for steps')
         return 1
 
+    # Capture action environment variables from spec
+    env = action.get('env', {})
+    if not isinstance(env, dict):
+        logger.error('Invalid value for action env')
+        return 1
+
+    if not preprocess_only:
+        # Merge environment vars spec in to global environment vars
+        for key in env.keys():
+            state['environ'][key] = str(env[key])
+
     # Process steps in action
     for step_name in action_steps:
         if step_name not in state['spec']['steps']:
@@ -152,14 +163,11 @@ def process_spec_v1_step(step_name, step, state, preprocess_only) -> int:
     # Determine which type of step this is and process
     if step_type == 'command' or step_type == 'pwsh' or step_type == 'bash':
         return process_spec_v1_step_command(step_name, step, state, preprocess_only=preprocess_only)
-    else:
-        logger.error(f'Step({step_name}): Unknown step type: {step_type})')
-        return 1
 
-    return 0
+    logger.error(f'Step({step_name}): Unknown step type: {step_type})')
+    return 1
 
-
-def process_spec_v1(spec_content, action_name) -> int:
+def process_spec_v1(spec, action_name) -> int:
     logger = logging.getLogger(__name__)
 
     # Process a version 1 specification file
@@ -167,17 +175,17 @@ def process_spec_v1(spec_content, action_name) -> int:
     # State for processing
     state = {
         'environ': os.environ.copy(),
-        'spec': spec_content
+        'spec': spec
     }
 
     # Make sure we have a dictionary for the spec
-    if not isinstance(spec_content, dict):
+    if not isinstance(spec, dict):
         logger.error('Specification is not a dictionary')
         return 1
 
     # Make sure we have a valid action name
     if action_name is None or action_name == '':
-        logger.error('Invalid action name specified')
+        logger.error('Invalid or empty action name specified')
         return 1
 
     # Capture global environment variables from spec
@@ -207,13 +215,14 @@ def process_spec_v1(spec_content, action_name) -> int:
         logger.error(f'Action name ({action_name}) does not exist')
         return 1
 
-    # Preprocess steps to capture any semantic issues early
+    # Preprocess steps and actions to capture any semantic issues early
+    logger.debug('Validating spec content')
+
     for key in steps.keys():
         ret = process_spec_v1_step(key, steps[key], state, preprocess_only=True)
         if ret != 0:
             return ret
 
-    # Preprocess actions to capture any semantic issues early
     for key in actions.keys():
         ret = process_spec_v1_action(key, actions[key], state, preprocess_only=True)
         if ret != 0:
@@ -222,10 +231,8 @@ def process_spec_v1(spec_content, action_name) -> int:
     # Process action
     logger.info(f'Processing action: {action_name}')
     ret = process_spec_v1_action(action_name, actions[action_name], state, preprocess_only=False)
-    if ret != 0:
-        return ret
 
-    return 0
+    return ret
 
 def process_args() -> int:
     # Create parser for command line arguments
@@ -236,28 +243,24 @@ def process_args() -> int:
     )
 
     # Parser configuration
-    parser.add_argument('-f',
-        action='store',
-        dest='spec',
-        required=True,
-        help='YAML spec file containing build or deployment definition')
-
-    parser.add_argument('-a',
-        action='store',
-        dest='action',
-        required=True,
-        help='Action name')
-
     parser.add_argument('-v',
         action='store_true',
         dest='verbose',
         help='Enable verbose output')
 
+    parser.add_argument(action='store',
+        dest='spec',
+        help='YAML spec file containing build or deployment definition')
+
+    parser.add_argument(action='store',
+        dest='action',
+        help='Action name')
+
     args = parser.parse_args()
 
     # Store the options here to allow modification depending on options
     verbose = args.verbose
-    spec = args.spec
+    spec_file = args.spec
     action_name = args.action
 
     # Logging configuration
@@ -268,39 +271,41 @@ def process_args() -> int:
     logger = logging.getLogger(__name__)
 
     # Check for spec file
-    if spec is None or spec == '':
-        logger.error('Empty specification supplied')
+    if spec_file is None or spec_file == '':
+        logger.error('Specification file not supplied')
         return 1
 
-    if not os.path.isfile(spec):
+    if not os.path.isfile(spec_file):
         logger.error('Spec file does not exist or is not a file')
         return 1
 
-    # Change directory to the spec file directory
-    dir_name = os.path.dirname(spec)
-    if dir_name != '':
-        os.chdir(dir_name)
-
     # Load spec file
-    logger.debug(f'Loading spec: {spec}')
+    logger.debug(f'Loading spec: {spec_file}')
     try:
-        with open(spec, 'r') as file:
-            spec_content = yaml.safe_load(file)
+        with open(spec_file, 'r') as file:
+            spec = yaml.safe_load(file)
     except Exception as e:
         logger.error(f'Failed to load and parse yaml spec file: {e}')
         return 1
 
+    # Change directory to the spec file directory
+    dir_name = os.path.dirname(spec_file)
+    if dir_name != '':
+        os.chdir(dir_name)
+
+    logger.debug(f'Working directory: {os.getcwd()}')
+
     # Load parser for the spec version
     try:
-        version = int(spec_content.get('version'))
+        version = str(spec.get('version'))
     except Exception as e:
         logger.error(f'Failed to read version information from spec: {e}')
         return 1
 
     # Determine which version of spec to process as
-    if version == 1:
+    if version == '1':
         logger.debug('Processing spec file as version 1')
-        ret = process_spec_v1(spec_content, action_name)
+        ret = process_spec_v1(spec, action_name)
     else:
         logger.error(f'Invalid version in spec file: {version}')
         return 1

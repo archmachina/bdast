@@ -1,0 +1,52 @@
+version: 1
+
+env:
+  REMOTE_ADDRESS: 1.1.1.1
+
+steps:
+  ping_info:
+    type: command
+    shell: true
+    command: echo Remote address to check $REMOTE_ADDRESS
+
+  ping:
+    type: command
+    shell: true
+    command: ping -c 3 $REMOTE_ADDRESS >/dev/null 2>&1 ; echo -n $?
+    capture: PING_OUTPUT
+
+  ping_result:
+    type: command
+    shell: true
+    command: echo $PING_OUTPUT
+
+  pwsh_info:
+    type: pwsh
+    command: |
+      $InformationPreference = "Continue"
+      Write-Information "Version Information"
+      $PSVersionTable | Format-Table
+
+      Write-Information $Env:TEST
+      Write-Information $Env:REMOTE_ADDRESS
+    env:
+      TEST: 1
+
+  docker_info:
+    type: bash
+    command: |
+      docker -v
+
+actions:
+  ping_check:
+    env:
+      REMOTE_ADDRESS: 8.8.8.8
+    steps:
+      - ping_info
+      - ping
+      - ping_result
+
+  build:
+    steps:
+      - pwsh_info
+      - docker_info
