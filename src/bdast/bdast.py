@@ -11,7 +11,36 @@ import logging
 import yaml
 import tempfile
 
-def process_spec_v1_step_command(step, state, preprocess) -> int:
+def process_spec_v1_action(action_name, action, state, preprocess_only) -> int:
+    logger = logging.getLogger(__name__)
+
+    # Capture relevant properties for this action
+    action_steps = action.get('steps', [])
+
+    # Validate parameters
+    if action_steps is None or not isinstance(action_steps, list):
+        logger.error(f'Action({action_name}): Invalid value for steps')
+        return 1
+
+    # Process steps in action
+    for step_name in action_steps:
+        if step_name not in state['spec']['steps']:
+            logger.error(f'Action({action_name}): Reference to step that does not exist - {step_name}')
+            return 1
+
+        # Only continue with processing if we're not preprocess_only
+        if preprocess_only:
+            continue
+
+        # Call the processor for this step
+        logger.info(f'Action({action_name}): Calling step {step_name}')
+        ret = process_spec_v1_step(step_name, state['spec']['steps'].get(step_name), state, preprocess_only=preprocess_only)
+        if ret != 0:
+            return ret
+
+    return 0
+
+def process_spec_v1_step_command(step_name, step, state, preprocess_only) -> int:
     logger = logging.getLogger(__name__)
 
     # Capture relevant properties for this step
@@ -24,31 +53,31 @@ def process_spec_v1_step_command(step, state, preprocess) -> int:
 
     # Validate parameters
     if step_shell is None or not isinstance(step_shell, bool):
-        logger.error('Invalid value on step shell')
+        logger.error(f'Step({step_name}): Invalid value on step shell')
         return 1
 
     if step_type is None or not isinstance(step_command, str) or step_command == '':
-        logger.error('Invalid value or empty step type')
+        logger.error(f'Step({step_name}: Invalid value or empty step type')
         return 1
 
     if step_command is None or not isinstance(step_command, str) or step_command == '':
-        logger.error('Invalid value or empty step command')
+        logger.error(f'Step({step_name}): Invalid value or empty step command')
         return 1
 
     if step_capture is None or not isinstance(step_capture, str):
-        logger.error('Invalid value on step capture')
+        logger.error(f'Step({step_name}): Invalid value on step capture')
         return 1
 
     if step_interpreter is None or not isinstance(step_interpreter, str):
-        logger.error('Invalid value or empty step interpreter')
+        logger.error(f'Step({step_name}): Invalid value on step interpreter')
         return 1
 
     if step_env is None or not isinstance(step_env, dict):
-        logger.error('Invalid value or empty step env')
+        logger.error(f'Step({step_name}): Invalid value on step env')
         return 1
 
     # Remainder of the function is actual work, so return here
-    if preprocess:
+    if preprocess_only:
         return 0
 
     # Arguments to subprocess.run
@@ -92,89 +121,111 @@ def process_spec_v1_step_command(step, state, preprocess) -> int:
 
     # Check if the process failed
     if proc.returncode != 0:
-
         # If the subprocess was called with stdout PIPE, output it here
         if stdout is not None:
             print(proc.stdout.decode('ascii'))
 
         logger.error(f'Process exited with non-zero exit code: {proc.returncode}')
-    else:
+    elif step_capture:
         # If we're capturing output from the step, put it in the environment now
-        if step_capture:
-            stdout_capture = proc.stdout.decode('ascii')
-            state['environ'][step_capture] = str(stdout_capture)
-            print(stdout_capture)
+        stdout_capture = proc.stdout.decode('ascii')
+        state['environ'][step_capture] = str(stdout_capture)
+        print(stdout_capture)
 
     return proc.returncode
 
-def process_spec_v1_step(step, state, preprocess) -> int:
+def process_spec_v1_step(step_name, step, state, preprocess_only) -> int:
     logger = logging.getLogger(__name__)
 
     # Get parameters for this step
-    step_name = step.get('name', '')
     step_type = step.get('type', 'command')
 
     # Validate parameters for the step
-    if step_name is None or not isinstance(step_name, str) or step_name == '':
-        logger.error('Invalid value or empty step name')
-        return 1
-
     if step_type is None or not isinstance(step_type, str) or step_type == '':
-        logger.error('Invalid value or empty step type')
+        logger.error(f'Step({step_name}): Invalid value for \'type\'')
         return 1
 
     # Status message, if we're actually processing the steps
-    if not preprocess:
+    if not preprocess_only:
         logger.info(f'Processing step: {step_name}')
 
     # Determine which type of step this is and process
     if step_type == 'command' or step_type == 'pwsh' or step_type == 'bash':
-        return process_spec_v1_step_command(step, state, preprocess)
+        return process_spec_v1_step_command(step_name, step, state, preprocess_only=preprocess_only)
     else:
-        logger.error(f'Unknown step type: {step_type}')
+        logger.error(f'Step({step_name}): Unknown step type: {step_type})')
         return 1
 
     return 0
 
 
-def process_spec_v1(spec_content) -> int:
+def process_spec_v1(spec_content, action_name) -> int:
     logger = logging.getLogger(__name__)
 
     # Process a version 1 specification file
 
     # State for processing
     state = {
-        'environ': os.environ.copy()
+        'environ': os.environ.copy(),
+        'spec': spec_content
     }
 
-    # Merge custom environment vars in
-    if 'env' in spec_content:
-        env = spec_content.get('env')
-        if not isinstance(env, dict):
-            logger.error('Invalid value for env')
-            return 1
+    # Make sure we have a dictionary for the spec
+    if not isinstance(spec_content, dict):
+        logger.error('Specification is not a dictionary')
+        return 1
 
-        # Merge definitions with current environment
-        for key in env.keys():
-            state['environ'][key] = str(env[key])
+    # Make sure we have a valid action name
+    if action_name is None or action_name == '':
+        logger.error('Invalid action name specified')
+        return 1
+
+    # Capture global environment variables from spec
+    env = state['spec'].get('env', {})
+    if not isinstance(env, dict):
+        logger.error('Invalid value for global env')
+        return 1
+
+    # Merge environment vars spec in to global environment vars
+    for key in env.keys():
+        state['environ'][key] = str(env[key])
 
     # Read in steps
-    steps = spec_content.get('steps', [])
-    if not isinstance(steps, list):
-        logger.error('The steps key is not a list')
+    steps = state['spec'].get('steps', {})
+    if not isinstance(steps, dict):
+        logger.error('The steps key is not a dict')
+        return 1
+
+    # Read in actions
+    actions = state['spec'].get('actions', {})
+    if not isinstance(actions, dict):
+        logger.error('The actions key is not a dict')
+        return 1
+
+    # Make sure the action name exists
+    if action_name not in actions:
+        logger.error(f'Action name ({action_name}) does not exist')
         return 1
 
     # Preprocess steps to capture any semantic issues early
-    for step in steps:
-        ret = process_spec_v1_step(step, state, preprocess=True)
+    for key in steps.keys():
+        ret = process_spec_v1_step(key, steps[key], state, preprocess_only=True)
         if ret != 0:
             return ret
 
-    # Process steps
-    for step in steps:
-        ret = process_spec_v1_step(step, state, preprocess=False)
+    # Preprocess actions to capture any semantic issues early
+    for key in actions.keys():
+        ret = process_spec_v1_action(key, actions[key], state, preprocess_only=True)
         if ret != 0:
             return ret
+
+    # Process action
+    logger.info(f'Processing action: {action_name}')
+    ret = process_spec_v1_action(action_name, actions[action_name], state, preprocess_only=False)
+    if ret != 0:
+        return ret
+
+    return 0
 
 def process_args() -> int:
     # Create parser for command line arguments
@@ -188,7 +239,14 @@ def process_args() -> int:
     parser.add_argument('-f',
         action='store',
         dest='spec',
+        required=True,
         help='YAML spec file containing build or deployment definition')
+
+    parser.add_argument('-a',
+        action='store',
+        dest='action',
+        required=True,
+        help='Action name')
 
     parser.add_argument('-v',
         action='store_true',
@@ -200,6 +258,7 @@ def process_args() -> int:
     # Store the options here to allow modification depending on options
     verbose = args.verbose
     spec = args.spec
+    action_name = args.action
 
     # Logging configuration
     level = logging.INFO
@@ -238,11 +297,19 @@ def process_args() -> int:
         logger.error(f'Failed to read version information from spec: {e}')
         return 1
 
+    # Determine which version of spec to process as
     if version == 1:
-        return process_spec_v1(spec_content)
+        logger.debug('Processing spec file as version 1')
+        ret = process_spec_v1(spec_content, action_name)
     else:
         logger.error(f'Invalid version in spec file: {version}')
         return 1
+
+    # Print message if spec processing failed
+    if ret != 0:
+        logger.error(f'Processing of spec failed with code {ret}')
+
+    return ret
 
 def main():
     try:
