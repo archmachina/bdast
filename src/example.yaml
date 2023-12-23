@@ -2,8 +2,28 @@ version: 1
 
 env:
   REMOTE_ADDRESS: 1.1.1.1
+  DEFAULT_SEMVER: 0.1.0-rc1+test12
+  BAD_SEMVER: x.x.x
 
 steps:
+  semver:
+    type: semver
+    sources:
+      - BAD_SEMVER
+      - DEFAULT_SEMVER
+    required: true
+
+  print_semver:
+    type: command
+    shell: true
+    command: |
+      echo $SEMVER_FULL
+      echo $SEMVER_MAJOR
+      echo $SEMVER_MINOR
+      echo $SEMVER_PATCH
+      echo $SEMVER_PRERELEASE
+      echo $SEMVER_BUILDMETA
+
   ping_info:
     type: command
     shell: true
@@ -38,6 +58,11 @@ steps:
       docker -v
 
 actions:
+  semver:
+    steps:
+      - semver
+      - print_semver
+
   ping_check:
     env:
       REMOTE_ADDRESS: 8.8.8.8

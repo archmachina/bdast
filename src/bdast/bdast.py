@@ -11,6 +11,72 @@ import logging
 import yaml
 import tempfile
 
+def process_spec_v1_step_semver(step_name, step, state, preprocess_only) -> int:
+    logger = logging.getLogger(__name__)
+
+    required = step.get('required', False)
+    sources = step.get('sources', [])
+
+    semver_regex = '^(?P<major>0|[1-9]\d*)\.(?P<minor>0|[1-9]\d*)\.(?P<patch>0|[1-9]\d*)(?:-(?P<prerelease>(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\.(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?(?:\+(?P<buildmetadata>[0-9a-zA-Z-]+(?:\.[0-9a-zA-Z-]+)*))?$'
+
+    # Validate parameters
+    if required is None or not isinstance(required, bool):
+        logger.error(f'Step({step_name}): Invalid value for required')
+        return 1
+
+    if sources is None or not isinstance(sources, list):
+        logger.error(f'Step({step_name}): Invalid value for sources')
+        return 1
+
+    if preprocess_only:
+        return 0
+
+    for env_name in sources:
+        env_name = str(env_name)
+
+        source = state['environ'].get(env_name, '')
+        logger.info(f'Checking {env_name}/{source}')
+
+        # Check if this source is a semver match
+        result = re.match(semver_regex, source)
+        if result is None:
+            continue
+
+        logger.info(f'Semver match on {source}')
+
+        # Assign semver components to environment vars
+        env_vars = {
+            'SEMVER_ORIG': source,
+            'SEMVER_FULL': '' if result[0] is None else result[0],
+            'SEMVER_MAJOR': '' if result[1] is None else result[1],
+            'SEMVER_MINOR': '' if result[2] is None else result[2],
+            'SEMVER_PATCH': '' if result[3] is None else result[3],
+            'SEMVER_PRERELEASE': '' if result[4] is None else result[4],
+            'SEMVER_BUILDMETA': '' if result[5] is None else result[5]
+        }
+
+        # Determine if this is a prerelease
+        if env_vars['SEMVER_PRERELEASE'] != '':
+            env_vars['SEMVER_IS_PRERELEASE'] = '1'
+        else:
+            env_vars['SEMVER_IS_PRERELEASE'] = '0'
+
+        logger.info('SEMVER version information')
+        print(env_vars)
+
+        # Merge semver vars in to environment vars
+        for key in env_vars:
+            state['environ'][key] = env_vars[key]
+
+        return 0
+
+    # No matches found
+    logger.error('No semver matches found')
+    if required:
+        return 1
+
+    return 0
+
 def process_spec_v1_action(action_name, action, state, preprocess_only) -> int:
     logger = logging.getLogger(__name__)
 
@@ -163,6 +229,8 @@ def process_spec_v1_step(step_name, step, state, preprocess_only) -> int:
     # Determine which type of step this is and process
     if step_type == 'command' or step_type == 'pwsh' or step_type == 'bash':
         return process_spec_v1_step_command(step_name, step, state, preprocess_only=preprocess_only)
+    elif step_type == 'semver':
+        return process_spec_v1_step_semver(step_name, step, state, preprocess_only=preprocess_only)
 
     logger.error(f'Step({step_name}): Unknown step type: {step_type})')
     return 1
