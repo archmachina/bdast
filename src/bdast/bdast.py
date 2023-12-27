@@ -110,8 +110,19 @@ def process_spec_v1_action(action_name, action, state, preprocess_only) -> int:
             continue
 
         # Call the processor for this step
-        logger.info(f'Action({action_name}): Calling step {step_name}')
-        ret = process_spec_v1_step(step_name, state['spec']['steps'].get(step_name), state, preprocess_only=preprocess_only)
+        print('')
+        print(f'**************** STEP {step_name}')
+
+        ret = process_spec_v1_step(step_name, state['spec']['steps'].get(step_name), state,
+                preprocess_only=preprocess_only)
+
+        if ret != 0:
+            logger.error(f'Step returned non-zero: {ret}')
+
+        print('')
+        print(f'**************** END STEP {step_name}')
+        print('')
+
         if ret != 0:
             return ret
 
@@ -199,7 +210,7 @@ def process_spec_v1_step_command(step_name, step, state, preprocess_only) -> int
     # Check if the process failed
     if proc.returncode != 0:
         # If the subprocess was called with stdout PIPE, output it here
-        if stdout is not None:
+        if subprocess_args['stdout'] is not None:
             print(proc.stdout.decode('ascii'))
 
         logger.error(f'Process exited with non-zero exit code: {proc.returncode}')
@@ -221,10 +232,6 @@ def process_spec_v1_step(step_name, step, state, preprocess_only) -> int:
     if step_type is None or not isinstance(step_type, str) or step_type == '':
         logger.error(f'Step({step_name}): Invalid value for \'type\'')
         return 1
-
-    # Status message, if we're actually processing the steps
-    if not preprocess_only:
-        logger.info(f'Processing step: {step_name}')
 
     # Determine which type of step this is and process
     if step_type == 'command' or step_type == 'pwsh' or step_type == 'bash':
@@ -297,8 +304,11 @@ def process_spec_v1(spec, action_name) -> int:
             return ret
 
     # Process action
-    logger.info(f'Processing action: {action_name}')
+    print('')
+    print(f'**************** ACTION {action_name}')
     ret = process_spec_v1_action(action_name, actions[action_name], state, preprocess_only=False)
+    print('**************** END ACTION')
+    print('')
 
     return ret
 
