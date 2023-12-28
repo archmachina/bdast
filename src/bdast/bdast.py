@@ -16,6 +16,7 @@ def process_spec_v1_step_semver(step_name, step, state, preprocess_only) -> int:
 
     required = step.get('required', False)
     sources = step.get('sources', [])
+    strip_regex = step.get('strip_regex', ['^refs/tags/', '^v'])
 
     semver_regex = '^(?P<major>0|[1-9]\d*)\.(?P<minor>0|[1-9]\d*)\.(?P<patch>0|[1-9]\d*)(?:-(?P<prerelease>(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\.(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?(?:\+(?P<buildmetadata>[0-9a-zA-Z-]+(?:\.[0-9a-zA-Z-]+)*))?$'
 
@@ -28,6 +29,10 @@ def process_spec_v1_step_semver(step_name, step, state, preprocess_only) -> int:
         logger.error(f'Step({step_name}): Invalid value for sources')
         return 1
 
+    if strip_regex is None or not isinstance(sources, list):
+        logger.error(f'Step({step_name}): Invalid value for strip_regex')
+        return 1
+
     if preprocess_only:
         return 0
 
@@ -36,6 +41,10 @@ def process_spec_v1_step_semver(step_name, step, state, preprocess_only) -> int:
 
         source = state['environ'].get(env_name, '')
         logger.info(f'Checking {env_name}/{source}')
+
+        # Strip any components matching strip_regex
+        for regex_item in strip_regex:
+            source = re.sub(regex_item, '', source)
 
         # Check if this source is a semver match
         result = re.match(semver_regex, source)
