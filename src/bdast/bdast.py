@@ -11,6 +11,33 @@ import logging
 import yaml
 import tempfile
 
+def spec_extract_value(spec, key, *, type_check=None,
+        default=None, required=False, failemptystr=False):
+    # Check that we have a valid spec
+    if spec is None or not isinstance(spec, dict):
+        raise Exception(f'spec is missing or is not a dictionary')
+
+    # Handle a missing key in the spec
+    if key not in spec:
+        if required:
+            raise KeyError(f'Missing key \'{key}\' in spec')
+        return default
+
+    # Retrieve value
+    val = spec[key]
+
+    # Perform type checking, if required
+    # Note - type checking is performed later than processing default, so no
+    # type checking is done on the default value
+    if type_check is None:
+        return val
+
+    if not isinstance(val, type_check):
+        raise Exception(f'Value for key \'{key}\' is not \'{type_check}\'')
+
+    if isinstance(val, str) and val == '':
+        raise Exception('Value for key \'{key}\' is empty, but a value is required')
+
 def process_spec_v1_step_semver(step_name, step, state, preprocess_only) -> int:
     logger = logging.getLogger(__name__)
 
@@ -378,7 +405,11 @@ def process_args() -> int:
     # Change directory to the spec file directory
     dir_name = os.path.dirname(spec_file)
     if dir_name != '':
-        os.chdir(dir_name)
+        try:
+            os.chdir(dir_name)
+        except Exception as e:
+            logger.error(f'Could not change to spec directory {dir_name}: {e}')
+            return 1
 
     logger.debug(f'Working directory: {os.getcwd()}')
 
@@ -390,11 +421,15 @@ def process_args() -> int:
         return 1
 
     # Determine which version of spec to process as
-    if version == '1':
-        logger.debug('Processing spec file as version 1')
-        ret = process_spec_v1(spec, action_name)
-    else:
-        logger.error(f'Invalid version in spec file: {version}')
+    try:
+        if version == '1':
+            logger.debug('Processing spec file as version 1')
+            ret = process_spec_v1(spec, action_name)
+        else:
+            logger.error(f'Invalid version in spec file: {version}')
+            return 1
+    except Exception as e:
+        logger.error(f'Failed processing spec with exception: {e}')
         return 1
 
     # Print message if spec processing failed
@@ -415,3 +450,4 @@ def main():
 
 if __name__ == '__main__':
     main()
+
