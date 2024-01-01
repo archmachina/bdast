@@ -33,7 +33,6 @@ class ScopeState:
 
     def merge_envs(self, new_envs, all_scopes=False):
         # Validate parameters
-        print(type(new_envs))
         if new_envs is None or not isinstance(new_envs, dict):
             raise Exception('Invalid type passed to merge_envs. Must be a dictionary')
 
@@ -47,8 +46,11 @@ class ScopeState:
 
 def template_if_string(val, mapping):
     if val is not None and isinstance(val, str):
-        template = Template(val)
-        return template.substitute(mapping)
+        try:
+            template = Template(val)
+            return template.substitute(mapping)
+        except KeyError as e:
+            raise Exception(f'Missing key in template substitution: {e}')
 
     return val
 
@@ -56,7 +58,15 @@ def assert_type(obj, obj_type, message):
     if not isinstance(obj, obj_type):
         raise Exception(message)
 
-def spec_extract_value(spec, key, *, template_map, default=None, required=False, failemptystr=False):
+def assert_not_none(obj, message):
+    if obj is None:
+        raise Exception(message)
+
+def assert_not_emptystr(obj, message):
+    if obj is None or (isinstance(obj, str) and obj == ''):
+        raise Exception(message)
+
+def spec_extract_value(spec, key, *, template_map, failemptystr=False, default=None):
     # Check that we have a valid spec
     if spec is None or not isinstance(spec, dict):
         raise Exception(f'spec is missing or is not a dictionary')
@@ -66,10 +76,14 @@ def spec_extract_value(spec, key, *, template_map, default=None, required=False,
         raise Exception('Invalid type passed as template_map')
 
     # Handle a missing key in the spec
-    if key not in spec:
-        if required:
-            raise KeyError(f'Missing key \'{key}\' in spec')
-        return default
+    if key not in spec or spec[key] == None:
+        # Key is not present or the value is null/None
+        # Return the default, if specified
+        if default is not None:
+            return default
+
+        # Key is not present or null and no default, so raise an exception
+        raise KeyError(f'Missing key \'{key}\' in spec or value is null')
 
     # Retrieve value
     val = spec[key]
@@ -95,34 +109,30 @@ def spec_extract_value(spec, key, *, template_map, default=None, required=False,
 
     return val
 
-def process_spec_v1_step_semver(step_name, step, state, validate_only) -> int:
+def process_spec_v1_step_semver(step_name, step, state) -> int:
     logger = logging.getLogger(__name__)
 
-    # Merge environment variables in early
-    step_env = spec_extract_value(step, 'env', default={}, template_map=state['environ'])
-    assert_type(step_env, dict, 'env is not a dictionary')
+    # Capture step properties
+    required = bool(spec_extract_value(step, 'required', default=False, template_map=state.envs))
 
-    for key in step_env.keys():
-        state['environ'][key] = str(step_env[key])
-
-    required = bool(spec_extract_value(step, 'required', default=False, template_map=state['environ']))
-    sources = spec_extract_value(step, 'sources', default=[], template_map=state['environ'])
+    sources = spec_extract_value(step, 'sources', default=[], template_map=state.envs)
     assert_type(sources, list, 'step sources is not a list')
 
     strip_regex = spec_extract_value(step, 'strip_regex', default=['$refs/tags/', '^v'],
-        template_map=state['environ'])
+        template_map=state.envs)
     assert_type(strip_regex, list, 'step strip_regex is not a list')
 
+    # Regex for identifying and splitting semver strings
+    # Reference: https://semver.org/
     semver_regex = '^(?P<major>0|[1-9]\d*)\.(?P<minor>0|[1-9]\d*)\.(?P<patch>0|[1-9]\d*)(?:-(?P<prerelease>(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\.(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?(?:\+(?P<buildmetadata>[0-9a-zA-Z-]+(?:\.[0-9a-zA-Z-]+)*))?$'
-
-    # Stop now if we're only validating
-    if validate_only:
-        return 0
 
     for env_name in sources:
         env_name = str(env_name)
 
-        source = state['environ'].get(env_name, '')
+        if env_name not in state.envs:
+            continue
+
+        source = state.envs[env_name]
         logger.info(f'Checking {env_name}/{source}')
 
         # Strip any components matching strip_regex
@@ -157,114 +167,34 @@ def process_spec_v1_step_semver(step_name, step, state, validate_only) -> int:
         print(env_vars)
 
         # Merge semver vars in to environment vars
-        for key in env_vars:
-            state['environ'][key] = env_vars[key]
+        state.merge_envs(env_vars, all_scopes=True)
 
-        return 0
+        return
 
     # No matches found
-    logger.error('No semver matches found')
     if required:
-        return 1
+        raise Exception('No semver matches found')
+    else:
+        logger.error('No semver matches found')
 
-    return 0
 
-def process_spec_v1_action(action_name, action, state, validate_only) -> int:
-    logger = logging.getLogger(__name__)
-
-    # Create a new scope state
-    state = ScopeState(parent=state)
-
-    # Merge environment variables in early
-    action_envs = spec_extract_value(action, 'env', default={}, template_map=state.envs)
-    assert_type(action_envs, dict, 'action envs is not a dictionary')
-    action_env.merge_envs(action_envs)
-
-    # Capture steps for this action
-    action_steps = spec_extract_value(action, 'steps', default={}, template_map=state.envs)
-    assert_type(action_steps, list, 'action steps is not a list')
-
-    # Process steps in action
-    for step_name in action_steps:
-        if step_name not in state.common.spec['steps']:
-            logger.error(f'Action({action_name}): Reference to step that does not exist - {step_name}')
-            return 1
-
-        # Only continue with processing if we're not validate_only
-        if validate_only:
-            continue
-
-        # Call the processor for this step
-        print('')
-        print(f'**************** STEP {step_name}')
-
-        ret = process_spec_v1_step(step_name, state.common.spec['steps'][step_name], state,
-                validate_only=validate_only)
-
-        if ret != 0:
-            logger.error(f'Step returned non-zero: {ret}')
-
-        print('')
-        print(f'**************** END STEP {step_name}')
-        print('')
-
-        if ret != 0:
-            return ret
-
-    return 0
-
-def process_spec_v1_step_command(step_name, step, state, validate_only) -> int:
+def process_spec_v1_step_command(step_name, step, state) -> int:
     logger = logging.getLogger(__name__)
 
     # Capture relevant properties for this step
-    step_type = step.get('type', '')
-    # step_shell = step.get('shell', False)
-    step_shell = bool(spec_extract_value(step, 'shell', default=False, template_map=state['environ']))
-    step_command = step.get('command', '')
-    step_capture = step.get('capture', '')
-    step_interpreter = step.get('interpreter', '')
-    step_env = step.get('env', {})
-
-    # Validate parameters
-    if step_shell is None or not isinstance(step_shell, bool):
-        logger.error(f'Step({step_name}): Invalid value on step shell')
-        return 1
-
-    if step_type is None or not isinstance(step_command, str) or step_command == '':
-        logger.error(f'Step({step_name}: Invalid value or empty step type')
-        return 1
-
-    if step_command is None or not isinstance(step_command, str) or step_command == '':
-        logger.error(f'Step({step_name}): Invalid value or empty step command')
-        return 1
-
-    if step_capture is None or not isinstance(step_capture, str):
-        logger.error(f'Step({step_name}): Invalid value on step capture')
-        return 1
-
-    if step_interpreter is None or not isinstance(step_interpreter, str):
-        logger.error(f'Step({step_name}): Invalid value on step interpreter')
-        return 1
-
-    if step_env is None or not isinstance(step_env, dict):
-        logger.error(f'Step({step_name}): Invalid value on step env')
-        return 1
-
-    # Remainder of the function is actual work, so return here
-    if validate_only:
-        return 0
+    step_type = str(spec_extract_value(step, 'type', template_map=state.envs, failemptystr=True))
+    step_shell = bool(spec_extract_value(step, 'shell', template_map=state.envs, default=False))
+    step_command = str(spec_extract_value(step, 'command', template_map=state.envs, failemptystr=True))
+    step_capture = str(spec_extract_value(step, 'capture', template_map=state.envs, default=''))
+    step_interpreter = str(spec_extract_value(step, 'interpreter', template_map=state.envs, default=''))
 
     # Arguments to subprocess.run
     subprocess_args = {
-        'env': state['environ'].copy(),
+        'env': state.envs.copy(),
         'stdout': None,
         'stderr': subprocess.STDOUT,
         'shell': step_shell
     }
-
-    # Merge environment variables in to this step environment
-    for key in step_env.keys():
-        subprocess_args['env'][key] = str(step_env[key])
 
     # If we're capturing, stdout should come back via pipe
     if step_capture != '':
@@ -277,7 +207,7 @@ def process_spec_v1_step_command(step_name, step, state, validate_only) -> int:
         step_interpreter = 'bash'
 
     # If an interpreter is defined, this is the executable to call instead
-    if step_interpreter is not None and step_interpreter != '':
+    if step_interpreter != '':
         call_args = step_interpreter
         subprocess_args['text'] = True
         subprocess_args['input'] = step_command
@@ -299,16 +229,15 @@ def process_spec_v1_step_command(step_name, step, state, validate_only) -> int:
         if subprocess_args['stdout'] is not None:
             print(proc.stdout.decode('ascii'))
 
-        logger.error(f'Process exited with non-zero exit code: {proc.returncode}')
+        raise Exception(f'Process exited with non-zero exit code: {proc.returncode}')
+
     elif step_capture:
         # If we're capturing output from the step, put it in the environment now
         stdout_capture = proc.stdout.decode('ascii')
-        state['environ'][step_capture] = str(stdout_capture)
+        state.merge_envs(envs, all_scopes=True)
         print(stdout_capture)
 
-    return proc.returncode
-
-def process_spec_v1_step(step_name, step, state, validate_only) -> int:
+def process_spec_v1_step(step_name, step, state) -> int:
     logger = logging.getLogger(__name__)
 
     # Create a new scope state
@@ -320,17 +249,47 @@ def process_spec_v1_step(step_name, step, state, validate_only) -> int:
     state.merge_envs(envs)
 
     # Get parameters for this step
-    step_type = spec_extract_value(step, 'type', template_map=state.envs, failemptystr=True)
-    assert_type(step_type, str, 'Step type is not a string')
+    step_type = str(spec_extract_value(step, 'type', template_map=state.envs, failemptystr=True))
 
     # Determine which type of step this is and process
     if step_type == 'command' or step_type == 'pwsh' or step_type == 'bash':
-        return process_spec_v1_step_command(step_name, step, state, validate_only=validate_only)
+        process_spec_v1_step_command(step_name, step, state)
     elif step_type == 'semver':
-        return process_spec_v1_step_semver(step_name, step, state, validate_only=validate_only)
+        process_spec_v1_step_semver(step_name, step, state)
+    else:
+        raise Exception(f'unknown step type: {step_type}')
 
-    logger.error(f'Step({step_name}): Unknown step type: {step_type})')
-    return 1
+def process_spec_v1_action(action_name, action, state) -> int:
+    logger = logging.getLogger(__name__)
+
+    # Create a new scope state
+    state = ScopeState(parent=state)
+
+    # Merge environment variables in early
+    envs = spec_extract_value(action, 'env', default={}, template_map=state.envs)
+    assert_type(envs, dict, 'action envs is not a dictionary')
+    state.merge_envs(envs)
+
+    # Capture steps for this action
+    action_steps = spec_extract_value(action, 'steps', default=[], template_map=state.envs)
+    assert_type(action_steps, list, 'action steps is not a list')
+    for item in action_steps:
+        assert_not_emptystr(item, 'action steps list item empty')
+
+    # Process steps in action
+    for step_name in action_steps:
+        if step_name not in state.common.spec['steps']:
+            raise Exception(f'Reference to step that does not exist: {step_name}')
+
+        # Call the processor for this step
+        print('')
+        print(f'**************** STEP {step_name}')
+
+        process_spec_v1_step(step_name, state.common.spec['steps'][step_name], state)
+
+        print('')
+        print(f'**************** END STEP {step_name}')
+        print('')
 
 def process_spec_v1(spec, action_name) -> int:
     logger = logging.getLogger(__name__)
@@ -343,50 +302,29 @@ def process_spec_v1(spec, action_name) -> int:
     state.common.spec = spec
 
     # Make sure we have a valid action name
-    if action_name is None or action_name == '':
-        logger.error('Invalid or empty action name specified')
-        return 1
+    assert_not_emptystr(action_name, 'Invalid or empty action name specified')
 
     # Capture global environment variables from spec and merge
-    envs = spec_extract_value(state.common.spec, 'env', default={},
-        template_map=state.envs)
-    assert_type(envs, dict, 'env is not a dictionary')
+    envs = spec_extract_value(state.common.spec, 'env', default={}, template_map=state.envs)
+    assert_type(envs, dict, 'global env is not a dictionary')
     state.merge_envs(envs)
 
     # Read in steps
-    steps = spec_extract_value(state.common.spec, 'steps', default={},
-        template_map=None)
-    assert_type(steps, dict, 'steps is not a dictionary')
+    steps = spec_extract_value(state.common.spec, 'steps', default={}, template_map=None)
+    assert_type(steps, dict, 'global steps is not a dictionary')
 
     # Read in actions
-    actions = spec_extract_value(state.common.spec, 'actions', default={},
-        template_map=None)
-    assert_type(actions, dict, 'actions is not a dictionary')
+    actions = spec_extract_value(state.common.spec, 'actions', default={}, template_map=None)
+    assert_type(actions, dict, 'global actions is not a dictionary')
 
     # Make sure the action name exists
     if action_name not in actions:
-        logger.error(f'Action name ({action_name}) does not exist')
-        return 1
-
-    # Validate steps and actions to capture any semantic issues early
-    logger.debug('Validating spec content')
-
-    for key in steps.keys():
-        ret = process_spec_v1_step(key, steps[key], state, validate_only=True)
-        if ret != 0:
-            return ret
-
-    for key in actions.keys():
-        ret = process_spec_v1_action(key, actions[key], state, validate_only=True)
-        if ret != 0:
-            return ret
+        raise Exception(f'Action name does not exist: {action_name}')
 
     # Process action
     print('')
     print(f'**************** ACTION {action_name}')
-    ret = process_spec_v1_action(action_name, actions[action_name], state, validate_only=False)
+    process_spec_v1_action(action_name, actions[action_name], state)
     print('**************** END ACTION')
     print('')
-
-    return ret
 
