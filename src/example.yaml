@@ -15,7 +15,7 @@ steps:
 
   print_semver:
     type: command
-    shell: true
+    shell: '$SHOULD_SHELL'
     command: |
       echo $SEMVER_FULL
       echo $SEMVER_MAJOR
@@ -23,6 +23,8 @@ steps:
       echo $SEMVER_PATCH
       echo $SEMVER_PRERELEASE
       echo $SEMVER_BUILDMETA
+    env:
+      SHOULD_SHELL: true
 
   ping_info:
     type: command
