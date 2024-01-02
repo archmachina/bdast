@@ -8,6 +8,7 @@ from string import Template
 import yaml
 from bdast_exception import SpecRunException
 
+
 class CommonState:
     def __init__(self, spec={}):
         self.spec = spec
@@ -32,7 +33,9 @@ class ScopeState:
     def merge_envs(self, new_envs, all_scopes=False):
         # Validate parameters
         if new_envs is None or not isinstance(new_envs, dict):
-            raise SpecRunException("Invalid type passed to merge_envs. Must be a dictionary")
+            raise SpecRunException(
+                "Invalid type passed to merge_envs. Must be a dictionary"
+            )
 
         # Merge new_envs dictionary in to the current envs
         for key in new_envs.keys():
@@ -156,7 +159,9 @@ def spec_extract_value(spec, key, *, template_map, failemptystr=False, default=N
 
         # Check if we have an empty string and should fail
         if failemptystr and val == "":
-            raise SpecRunException(f'Value for key "{key}" is empty, but a value is required')
+            raise SpecRunException(
+                f'Value for key "{key}" is empty, but a value is required'
+            )
 
     # Perform string substitution for other types
     if template_map is not None and val is not None:
@@ -320,7 +325,9 @@ def process_spec_v1_step_command(step_name, step, state) -> int:
         if subprocess_args["stdout"] is not None:
             print(proc.stdout.decode("ascii"))
 
-        raise SpecRunException(f"Process exited with non-zero exit code: {proc.returncode}")
+        raise SpecRunException(
+            f"Process exited with non-zero exit code: {proc.returncode}"
+        )
 
     elif step_capture:
         # If we're capturing output from the step, put it in the environment now
@@ -380,7 +387,9 @@ def process_spec_v1_action(action_name, action, state) -> int:
                 raise SpecRunException("Empty step reference")
 
             if step_ref not in state.common.spec["steps"]:
-                raise SpecRunException(f"Reference to step that does not exist: {step_name}")
+                raise SpecRunException(
+                    f"Reference to step that does not exist: {step_name}"
+                )
 
             step_name = step_ref
             step_ref = state.common.spec["steps"][step_name]
