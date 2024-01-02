@@ -13,13 +13,14 @@ import yaml
 import bdast_v1
 from bdast_exception import SpecLoadException
 
+logger = logging.getLogger(__name__)
+
 
 def load_spec(spec_file, action_name):
     """
     Loads and parses the YAML specification from file, sets the working directory, and
     calls the appropriate processor for the version of the specification
     """
-    logger = logging.getLogger(__name__)
 
     # Check for spec file
     if spec_file is None or spec_file == "":
@@ -104,7 +105,6 @@ def process_args() -> int:
         level = logging.DEBUG
 
     logging.basicConfig(level=level, format="%(levelname)s: %(message)s")
-    logger = logging.getLogger(__name__)
 
     try:
         load_spec(spec_file, action_name)

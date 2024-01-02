@@ -8,9 +8,14 @@ from string import Template
 import yaml
 from bdast_exception import SpecRunException
 
+logger = logging.getLogger(__name__)
+
 
 class CommonState:
-    def __init__(self, spec={}):
+    def __init__(self, spec=None):
+        if spec is None:
+            spec = {}
+
         self.spec = spec
 
 
@@ -52,7 +57,7 @@ def template_if_string(val, mapping):
             template = Template(val)
             return template.substitute(mapping)
         except KeyError as e:
-            raise SpecRunException(f"Missing key in template substitution: {e}")
+            raise SpecRunException(f"Missing key in template substitution: {e}") from e
 
     return val
 
@@ -74,7 +79,7 @@ def assert_not_emptystr(obj, message):
 
 def parse_bool(obj):
     if obj is None:
-        raise SpecRunException(f"None value passed to parse_bool")
+        raise SpecRunException("None value passed to parse_bool")
 
     if isinstance(obj, bool):
         return obj
@@ -91,8 +96,6 @@ def parse_bool(obj):
 
 
 def merge_spec_envs(spec, state, all_scopes=False):
-    logger = logging.getLogger(__name__)
-
     if not isinstance(spec, dict):
         raise SpecRunException("spec passed to merge_spec_envs is not a dictionary")
 
@@ -115,7 +118,7 @@ def merge_spec_envs(spec, state, all_scopes=False):
         if file == "":
             raise SpecRunException("Empty file name specified in env_files")
 
-        with open(file, "r") as file:
+        with open(file, "r", encoding="utf-8") as file:
             content = yaml.safe_load(file)
 
         if not isinstance(content, dict):
@@ -126,20 +129,20 @@ def merge_spec_envs(spec, state, all_scopes=False):
             envs[key] = str(content[key])
 
     state.merge_envs(envs, all_scopes=all_scopes)
-    logger.debug(f"envs: {envs}")
+    logger.debug("envs: %s", envs)
 
 
 def spec_extract_value(spec, key, *, template_map, failemptystr=False, default=None):
     # Check that we have a valid spec
     if spec is None or not isinstance(spec, dict):
-        raise SpecRunException(f"spec is missing or is not a dictionary")
+        raise SpecRunException("spec is missing or is not a dictionary")
 
     # Check type for template_map
     if template_map is not None and not isinstance(template_map, dict):
         raise SpecRunException("Invalid type passed as template_map")
 
     # Handle a missing key in the spec
-    if key not in spec or spec[key] == None:
+    if key not in spec or spec[key] is None:
         # Key is not present or the value is null/None
         # Return the default, if specified
         if default is not None:
@@ -169,24 +172,22 @@ def spec_extract_value(spec, key, *, template_map, failemptystr=False, default=N
             val = [template_if_string(x, template_map) for x in val]
 
         if isinstance(val, dict):
-            for key in val.keys():
-                val[key] = template_if_string(val[key], template_map)
+            for val_key in val.keys():
+                val[val_key] = template_if_string(val[val_key], template_map)
 
     return val
 
 
-def process_spec_v1_step_semver(step_name, step, state) -> int:
-    logger = logging.getLogger(__name__)
-
+def process_spec_v1_step_semver(step, state) -> int:
     # Capture step properties
     required = parse_bool(
         spec_extract_value(step, "required", default=False, template_map=state.envs)
     )
-    logger.debug(f"required: {required}")
+    logger.debug("required: %s", required)
 
     sources = spec_extract_value(step, "sources", default=[], template_map=state.envs)
     assert_type(sources, list, "step sources is not a list")
-    logger.debug(f"sources: {sources}")
+    logger.debug("sources: %s", sources)
 
     strip_regex = spec_extract_value(
         step, "strip_regex", default=["^refs/tags/", "^v"], template_map=state.envs
@@ -196,28 +197,31 @@ def process_spec_v1_step_semver(step_name, step, state) -> int:
 
     # Regex for identifying and splitting semver strings
     # Reference: https://semver.org/
-    semver_regex = "^(?P<major>0|[1-9]\d*)\.(?P<minor>0|[1-9]\d*)\.(?P<patch>0|[1-9]\d*)(?:-(?P<prerelease>(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\.(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?(?:\+(?P<buildmetadata>[0-9a-zA-Z-]+(?:\.[0-9a-zA-Z-]+)*))?$"
+    semver_regex = r"^(?P<major>0|[1-9]\d*)\.(?P<minor>0|[1-9]\d*)\."
+    semver_regex += r"(?P<patch>0|[1-9]\d*)(?:-(?P<prerelease>(?:0|[1-9]\d*|\d*[a-zA-Z-]"
+    semver_regex += r"[0-9a-zA-Z-]*)(?:\.(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?"
+    semver_regex += r"(?:\+(?P<buildmetadata>[0-9a-zA-Z-]+(?:\.[0-9a-zA-Z-]+)*))?$"
 
     for env_name in sources:
         env_name = str(env_name)
 
         if env_name not in state.envs:
-            logger.debug(f"Env var {env_name} not present")
+            logger.debug("Env var %s not present", env_name)
             continue
 
         source = state.envs[env_name]
-        logger.info(f"Checking {env_name}/{source}")
+        logger.info("Checking %s/%s", env_name, source)
 
         # Strip any components matching strip_regex
         for regex_item in strip_regex:
             source = re.sub(regex_item, "", source)
 
-        logger.debug(f"Source post-regex strip: {source}")
+        logger.debug("Source post-regex strip: %s", source)
 
         # Check if this source is a semver match
         result = re.match(semver_regex, source)
         if result is None:
-            logger.debug(f"Source ({source}) is not a match")
+            logger.debug("Source (%s) is not a match", source)
             continue
 
         logger.info("Semver match on %s", source)
@@ -249,13 +253,11 @@ def process_spec_v1_step_semver(step_name, step, state) -> int:
     # No matches found
     if required:
         raise SpecRunException("No semver matches found")
-    else:
-        logger.warning("No semver matches found")
+
+    logger.warning("No semver matches found")
 
 
-def process_spec_v1_step_command(step_name, step, state) -> int:
-    logger = logging.getLogger(__name__)
-
+def process_spec_v1_step_command(step, state) -> int:
     # Capture relevant properties for this step
     step_type = str(
         spec_extract_value(step, "type", template_map=state.envs, failemptystr=True)
@@ -265,7 +267,7 @@ def process_spec_v1_step_command(step_name, step, state) -> int:
     step_shell = parse_bool(
         spec_extract_value(step, "shell", template_map=state.envs, default=False)
     )
-    logger.debug(f"shell: %s", step_shell)
+    logger.debug("shell: %s", step_shell)
 
     step_capture = str(
         spec_extract_value(step, "capture", template_map=state.envs, default="")
@@ -317,7 +319,7 @@ def process_spec_v1_step_command(step_name, step, state) -> int:
     logger.debug("Subprocess args: %s", subprocess_args)
 
     sys.stdout.flush()
-    proc = subprocess.run(call_args, **subprocess_args)
+    proc = subprocess.run(call_args, check=False, **subprocess_args)
 
     # Check if the process failed
     if proc.returncode != 0:
@@ -329,16 +331,14 @@ def process_spec_v1_step_command(step_name, step, state) -> int:
             f"Process exited with non-zero exit code: {proc.returncode}"
         )
 
-    elif step_capture:
+    if step_capture:
         # If we're capturing output from the step, put it in the environment now
         stdout_capture = proc.stdout.decode("ascii")
         state.merge_envs({step_capture: stdout_capture}, all_scopes=True)
         print(stdout_capture)
 
 
-def process_spec_v1_step(step_name, step, state) -> int:
-    logger = logging.getLogger(__name__)
-
+def process_spec_v1_step(step, state) -> int:
     # Create a new scope state
     state = ScopeState(parent=state)
 
@@ -349,20 +349,18 @@ def process_spec_v1_step(step_name, step, state) -> int:
     step_type = str(
         spec_extract_value(step, "type", template_map=state.envs, failemptystr=True)
     )
-    logger.debug(f"type: {step_type}")
+    logger.debug("type: %s", step_type)
 
     # Determine which type of step this is and process
-    if step_type == "command" or step_type == "pwsh" or step_type == "bash":
-        process_spec_v1_step_command(step_name, step, state)
+    if step_type in ("command", "pwsh", "bash"):
+        process_spec_v1_step_command(step, state)
     elif step_type == "semver":
-        process_spec_v1_step_semver(step_name, step, state)
+        process_spec_v1_step_semver(step, state)
     else:
         raise SpecRunException(f"unknown step type: {step_type}")
 
 
-def process_spec_v1_action(action_name, action, state) -> int:
-    logger = logging.getLogger(__name__)
-
+def process_spec_v1_action(action, state) -> int:
     # Create a new scope state
     state = ScopeState(parent=state)
 
@@ -375,7 +373,7 @@ def process_spec_v1_action(action_name, action, state) -> int:
     )
     assert_type(action_steps, list, "action steps is not a list")
     for item in action_steps:
-        if isinstance(item, dict) or isinstance(item, str):
+        if isinstance(item, (dict, str)):
             continue
 
         raise SpecRunException(f"Invalid value in steps list ({str(item)})")
@@ -402,7 +400,7 @@ def process_spec_v1_action(action_name, action, state) -> int:
         print("")
         print(f"**************** STEP {step_name}")
 
-        process_spec_v1_step(step_name, step_ref, state)
+        process_spec_v1_step(step_ref, state)
 
         print("")
         print(f"**************** END STEP {step_name}")
@@ -410,8 +408,6 @@ def process_spec_v1_action(action_name, action, state) -> int:
 
 
 def process_spec_v1(spec, action_name) -> int:
-    logger = logging.getLogger(__name__)
-
     # Make sure we have a dictionary for the spec
     assert_type(spec, dict, "Specification is not a dictionary")
 
@@ -444,6 +440,6 @@ def process_spec_v1(spec, action_name) -> int:
     # Process action
     print("")
     print(f"**************** ACTION {action_name}")
-    process_spec_v1_action(action_name, actions[action_name], state)
+    process_spec_v1_action(actions[action_name], state)
     print("**************** END ACTION")
     print("")
