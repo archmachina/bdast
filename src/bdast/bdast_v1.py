@@ -42,7 +42,7 @@ class ScopeState:
 
         # Call merge for parent, if all_scopes required
         if all_scopes and self.parent is not None:
-            parent.merge_envs(new_envs, all_scopes=True)
+            self.parent.merge_envs(new_envs, all_scopes=True)
 
 def template_if_string(val, mapping):
     if val is not None and isinstance(val, str):
@@ -117,10 +117,12 @@ def process_spec_v1_step_semver(step_name, step, state) -> int:
 
     sources = spec_extract_value(step, 'sources', default=[], template_map=state.envs)
     assert_type(sources, list, 'step sources is not a list')
+    logger.debug(f'Sources: {sources}')
 
-    strip_regex = spec_extract_value(step, 'strip_regex', default=['$refs/tags/', '^v'],
+    strip_regex = spec_extract_value(step, 'strip_regex', default=['^refs/tags/', '^v'],
         template_map=state.envs)
     assert_type(strip_regex, list, 'step strip_regex is not a list')
+    logger.debug(f'Strip regex: {strip_regex}')
 
     # Regex for identifying and splitting semver strings
     # Reference: https://semver.org/
@@ -130,6 +132,7 @@ def process_spec_v1_step_semver(step_name, step, state) -> int:
         env_name = str(env_name)
 
         if env_name not in state.envs:
+            logger.debug(f'Env var {env_name} not present')
             continue
 
         source = state.envs[env_name]
@@ -138,6 +141,8 @@ def process_spec_v1_step_semver(step_name, step, state) -> int:
         # Strip any components matching strip_regex
         for regex_item in strip_regex:
             source = re.sub(regex_item, '', source)
+
+        logger.debug(f'Source post-regex strip: {source}')
 
         # Check if this source is a semver match
         result = re.match(semver_regex, source)
