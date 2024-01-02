@@ -1,10 +1,14 @@
-import os
-import sys
-import re
-import subprocess
-import shlex
+"""
+"""
+
 import logging
+import os
+import re
+import shlex
+import subprocess
+import sys
 from string import Template
+
 import yaml
 from bdast_exception import SpecRunException
 
@@ -198,9 +202,11 @@ def process_spec_v1_step_semver(step, state) -> int:
     # Regex for identifying and splitting semver strings
     # Reference: https://semver.org/
     semver_regex = r"^(?P<major>0|[1-9]\d*)\.(?P<minor>0|[1-9]\d*)\."
-    semver_regex += r"(?P<patch>0|[1-9]\d*)(?:-(?P<prerelease>(?:0|[1-9]\d*|\d*[a-zA-Z-]"
-    semver_regex += r"[0-9a-zA-Z-]*)(?:\.(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?"
-    semver_regex += r"(?:\+(?P<buildmetadata>[0-9a-zA-Z-]+(?:\.[0-9a-zA-Z-]+)*))?$"
+    semver_regex += r"(?P<patch>0|[1-9]\d*)(?:-(?P<prerelease>"
+    semver_regex += r"(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*)"
+    semver_regex += r"(?:\.(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?"
+    semver_regex += r"(?:\+(?P<buildmetadata>[0-9a-zA-Z-]+"
+    semver_regex += r"(?:\.[0-9a-zA-Z-]+)*))?$"
 
     for env_name in sources:
         env_name = str(env_name)

@@ -4,13 +4,12 @@ Build and Deployment Assistance - This module is the entrypoint for the command 
 and will perform actions based on the content of a YAML specification file.
 """
 
-import os
-import sys
 import argparse
 import logging
-import yaml
-
+import os
+import sys
 import bdast_v1
+import yaml
 from bdast_exception import SpecLoadException
 
 logger = logging.getLogger(__name__)
