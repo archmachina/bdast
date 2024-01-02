@@ -4,6 +4,7 @@
 import logging
 import os
 import re
+import requests
 import shlex
 import subprocess
 import sys
@@ -182,6 +183,61 @@ def spec_extract_value(spec, key, *, template_map, failemptystr=False, default=N
     return val
 
 
+def process_spec_v1_step_github_release(step, state) -> int:
+    # Capture step properties
+    owner = str(
+        spec_extract_value(step, "owner", failemptystr=True, template_map=state.envs)
+    )
+    logger.debug("owner: %s", owner)
+
+    repo = str(
+        spec_extract_value(step, "repo", failemptystr=True, template_map=state.envs)
+    )
+    logger.debug("repo: %s", repo)
+
+    token = str(
+        spec_extract_value(step, "token", failemptystr=True, template_map=state.envs)
+    )
+    # logger.debug("token: %s", token)
+    logger.debug("token: ********")
+
+    payload = str(
+        spec_extract_value(step, "payload", failemptystr=True, template_map=state.envs)
+    )
+    logger.debug("payload: %s", payload)
+
+    api_version = str(
+        spec_extract_value(step, "api_version", default="2022-11-28",
+        failemptystr=True, template_map=state.envs)
+    )
+    logger.debug("api_version: %s", api_version)
+
+    # Construct URL for post
+    url = f"https://api.github.com/repos/{owner}/{repo}/releases"
+    logger.info("Repo URL: %s", url)
+
+    # Headers for post
+    headers = {
+        "Accept": "application/vnd.github.v3+json",
+        "Authorization": f"token {token}",
+        "Content-Type": "application/json",
+        "X-GitHub-Api-Version": api_version
+    }
+
+    logger.debug("Post url: %s", url)
+    str_headers = str(headers)
+    str_headers = str_headers.replace(token, "********")
+    logger.debug("Post headers: %s", str_headers)
+    logger.debug("Post payload: %s", payload)
+
+    logger.info("Performing post against github")
+    response = requests.post(url, headers=headers, data=payload)
+    response.raise_for_status()
+
+    logger.info("Request successful")
+    logger.debug("Response code: %s", response.status_code)
+    logger.debug("Response text: %s", response.text)
+
 def process_spec_v1_step_semver(step, state) -> int:
     # Capture step properties
     required = parse_bool(
@@ -246,8 +302,10 @@ def process_spec_v1_step_semver(step, state) -> int:
         # Determine if this is a prerelease
         if env_vars["SEMVER_PRERELEASE"] != "":
             env_vars["SEMVER_IS_PRERELEASE"] = "1"
+            env_vars["SEMVER_IS_PRERELEASE_WORD"] = "true"
         else:
             env_vars["SEMVER_IS_PRERELEASE"] = "0"
+            env_vars["SEMVER_IS_PRERELEASE_WORD"] = "false"
 
         print(f"SEMVER version information: {env_vars}")
 
@@ -348,6 +406,9 @@ def process_spec_v1_step(step, state) -> int:
     # Create a new scope state
     state = ScopeState(parent=state)
 
+    # Validate action type
+    assert_type(step, dict, "Step is not a dictionary")
+
     # Merge environment variables in early
     merge_spec_envs(step, state)
 
@@ -362,6 +423,8 @@ def process_spec_v1_step(step, state) -> int:
         process_spec_v1_step_command(step, state)
     elif step_type == "semver":
         process_spec_v1_step_semver(step, state)
+    elif step_type == "github_release":
+        process_spec_v1_step_github_release(step, state)
     else:
         raise SpecRunException(f"unknown step type: {step_type}")
 
@@ -369,6 +432,9 @@ def process_spec_v1_step(step, state) -> int:
 def process_spec_v1_action(action, state) -> int:
     # Create a new scope state
     state = ScopeState(parent=state)
+
+    # Validate action type
+    assert_type(action, dict, "Action is not a dictionary")
 
     # Merge environment variables in early
     merge_spec_envs(action, state)
