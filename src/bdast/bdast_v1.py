@@ -66,6 +66,23 @@ def assert_not_emptystr(obj, message):
     if obj is None or (isinstance(obj, str) and obj == ''):
         raise Exception(message)
 
+def parse_bool(obj):
+    if obj is None:
+        raise Exception(f'None value passed to parse_bool')
+
+    if isinstance(obj, bool):
+        return obj
+
+    obj = str(obj)
+
+    if obj.lower() in [ 'true', '1' ]:
+        return True
+
+    if obj.lower() in [ 'false', '0' ]:
+        return False
+
+    raise Exception(f'Unparseable value ({obj}) passed to parse_bool')
+
 def spec_extract_value(spec, key, *, template_map, failemptystr=False, default=None):
     # Check that we have a valid spec
     if spec is None or not isinstance(spec, dict):
@@ -113,7 +130,7 @@ def process_spec_v1_step_semver(step_name, step, state) -> int:
     logger = logging.getLogger(__name__)
 
     # Capture step properties
-    required = bool(spec_extract_value(step, 'required', default=False, template_map=state.envs))
+    required = parse_bool(spec_extract_value(step, 'required', default=False, template_map=state.envs))
 
     sources = spec_extract_value(step, 'sources', default=[], template_map=state.envs)
     assert_type(sources, list, 'step sources is not a list')
@@ -188,10 +205,10 @@ def process_spec_v1_step_command(step_name, step, state) -> int:
 
     # Capture relevant properties for this step
     step_type = str(spec_extract_value(step, 'type', template_map=state.envs, failemptystr=True))
-    step_shell = bool(spec_extract_value(step, 'shell', template_map=state.envs, default=False))
-    step_command = str(spec_extract_value(step, 'command', template_map=state.envs, failemptystr=True))
+    step_shell = parse_bool(spec_extract_value(step, 'shell', template_map=state.envs, default=False))
     step_capture = str(spec_extract_value(step, 'capture', template_map=state.envs, default=''))
     step_interpreter = str(spec_extract_value(step, 'interpreter', template_map=state.envs, default=''))
+    step_command = str(spec_extract_value(step, 'command', template_map=None, failemptystr=True))
 
     # Arguments to subprocess.run
     subprocess_args = {
@@ -239,7 +256,7 @@ def process_spec_v1_step_command(step_name, step, state) -> int:
     elif step_capture:
         # If we're capturing output from the step, put it in the environment now
         stdout_capture = proc.stdout.decode('ascii')
-        state.merge_envs(envs, all_scopes=True)
+        state.merge_envs({step_capture: stdout_capture}, all_scopes=True)
         print(stdout_capture)
 
 def process_spec_v1_step(step_name, step, state) -> int:

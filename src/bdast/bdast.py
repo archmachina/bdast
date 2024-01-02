@@ -95,7 +95,7 @@ def process_args() -> int:
     try:
         if version == '1':
             logger.info('Processing spec as version 1')
-            ret = bdast_v1.process_spec_v1(spec, action_name)
+            bdast_v1.process_spec_v1(spec, action_name)
         else:
             logger.error(f'Invalid version in spec file: {version}')
             return 1
@@ -105,11 +105,7 @@ def process_args() -> int:
         logger.error(f'Failed processing spec with exception: {e}')
         return 1
 
-    # Print message if spec processing failed
-    if ret != 0:
-        logger.error(f'Processing of spec failed with code {ret}')
-
-    return ret
+    return 0
 
 def main():
     try:
