@@ -131,15 +131,16 @@ def process_spec_v1_step_semver(step_name, step, state) -> int:
 
     # Capture step properties
     required = parse_bool(spec_extract_value(step, 'required', default=False, template_map=state.envs))
+    logger.debug(f'required: {required}')
 
     sources = spec_extract_value(step, 'sources', default=[], template_map=state.envs)
     assert_type(sources, list, 'step sources is not a list')
-    logger.debug(f'Sources: {sources}')
+    logger.debug(f'sources: {sources}')
 
     strip_regex = spec_extract_value(step, 'strip_regex', default=['^refs/tags/', '^v'],
         template_map=state.envs)
     assert_type(strip_regex, list, 'step strip_regex is not a list')
-    logger.debug(f'Strip regex: {strip_regex}')
+    logger.debug(f'strip_regex: {strip_regex}')
 
     # Regex for identifying and splitting semver strings
     # Reference: https://semver.org/
@@ -164,6 +165,7 @@ def process_spec_v1_step_semver(step_name, step, state) -> int:
         # Check if this source is a semver match
         result = re.match(semver_regex, source)
         if result is None:
+            logger.debug(f'Source ({source}) is not a match')
             continue
 
         logger.info(f'Semver match on {source}')
@@ -185,8 +187,7 @@ def process_spec_v1_step_semver(step_name, step, state) -> int:
         else:
             env_vars['SEMVER_IS_PRERELEASE'] = '0'
 
-        logger.info('SEMVER version information')
-        print(env_vars)
+        print(f'SEMVER version information: {env_vars}')
 
         # Merge semver vars in to environment vars
         state.merge_envs(env_vars, all_scopes=True)
@@ -197,7 +198,7 @@ def process_spec_v1_step_semver(step_name, step, state) -> int:
     if required:
         raise Exception('No semver matches found')
     else:
-        logger.error('No semver matches found')
+        logger.warning('No semver matches found')
 
 
 def process_spec_v1_step_command(step_name, step, state) -> int:
@@ -205,10 +206,19 @@ def process_spec_v1_step_command(step_name, step, state) -> int:
 
     # Capture relevant properties for this step
     step_type = str(spec_extract_value(step, 'type', template_map=state.envs, failemptystr=True))
+    # logger.debug(f'type: {step_type}')
+
     step_shell = parse_bool(spec_extract_value(step, 'shell', template_map=state.envs, default=False))
+    logger.debug(f'shell: {step_shell}')
+
     step_capture = str(spec_extract_value(step, 'capture', template_map=state.envs, default=''))
+    logger.debug(f'capture: {step_capture}')
+
     step_interpreter = str(spec_extract_value(step, 'interpreter', template_map=state.envs, default=''))
+    logger.debug(f'interpreter: {step_interpreter}')
+
     step_command = str(spec_extract_value(step, 'command', template_map=None, failemptystr=True))
+    logger.debug(f'command: {step_command}')
 
     # Arguments to subprocess.run
     subprocess_args = {
@@ -242,6 +252,8 @@ def process_spec_v1_step_command(step_name, step, state) -> int:
         call_args = shlex.split(call_args)
 
     logger.debug(f'Call arguments: {call_args}')
+    logger.debug(f'Subprocess args: {subprocess_args}')
+
     sys.stdout.flush()
     proc = subprocess.run(call_args, **subprocess_args)
 
@@ -269,9 +281,11 @@ def process_spec_v1_step(step_name, step, state) -> int:
     envs = spec_extract_value(step, 'env', default={}, template_map=state.envs)
     assert_type(envs, dict, 'step env is not a dictionary')
     state.merge_envs(envs)
+    logger.debug(f'envs: {envs}')
 
     # Get parameters for this step
     step_type = str(spec_extract_value(step, 'type', template_map=state.envs, failemptystr=True))
+    logger.debug(f'type: {step_type}')
 
     # Determine which type of step this is and process
     if step_type == 'command' or step_type == 'pwsh' or step_type == 'bash':
@@ -291,12 +305,15 @@ def process_spec_v1_action(action_name, action, state) -> int:
     envs = spec_extract_value(action, 'env', default={}, template_map=state.envs)
     assert_type(envs, dict, 'action envs is not a dictionary')
     state.merge_envs(envs)
+    logger.debug(f'envs: {envs}')
 
     # Capture steps for this action
     action_steps = spec_extract_value(action, 'steps', default=[], template_map=state.envs)
     assert_type(action_steps, list, 'action steps is not a list')
     for item in action_steps:
         assert_not_emptystr(item, 'action steps list item empty')
+
+    logger.info(f'Steps in action: {action_steps}')
 
     # Process steps in action
     for step_name in action_steps:
@@ -330,6 +347,8 @@ def process_spec_v1(spec, action_name) -> int:
     envs = spec_extract_value(state.common.spec, 'env', default={}, template_map=state.envs)
     assert_type(envs, dict, 'global env is not a dictionary')
     state.merge_envs(envs)
+
+    logger.debug(f'envs: {envs}')
 
     # Read in steps
     steps = spec_extract_value(state.common.spec, 'steps', default={}, template_map=None)

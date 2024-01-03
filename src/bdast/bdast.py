@@ -29,6 +29,11 @@ def process_args() -> int:
         dest='verbose',
         help='Enable verbose output')
 
+    parser.add_argument('-d',
+        action='store_true',
+        dest='debug',
+        help='Enable debug output')
+
     parser.add_argument(action='store',
         dest='spec',
         help='YAML spec file containing build or deployment definition')
@@ -41,13 +46,17 @@ def process_args() -> int:
 
     # Store the options here to allow modification depending on options
     verbose = args.verbose
+    debug = args.debug
     spec_file = args.spec
     action_name = args.action
 
     # Logging configuration
-    level = logging.INFO
+    level = logging.WARNING
     if verbose:
+        level = logging.INFO
+    if debug:
         level = logging.DEBUG
+
     logging.basicConfig(level=level, format='%(levelname)s: %(message)s')
     logger = logging.getLogger(__name__)
 
@@ -66,7 +75,7 @@ def process_args() -> int:
         with open(spec_file, 'r') as file:
             spec = yaml.safe_load(file)
     except Exception as e:
-        if verbose:
+        if debug:
             logger.exception(e)
         logger.error(f'Failed to load and parse yaml spec file: {e}')
         return 1
@@ -85,8 +94,9 @@ def process_args() -> int:
     # Extract version number from the spec
     try:
         version = str(spec.get('version'))
+        logger.info(f'Version from specification: {version}')
     except Exception as e:
-        if verbose:
+        if debug:
             logger.exception(e)
         logger.error(f'Failed to read version information from spec: {e}')
         return 1
@@ -100,11 +110,12 @@ def process_args() -> int:
             logger.error(f'Invalid version in spec file: {version}')
             return 1
     except Exception as e:
-        if verbose:
+        if debug:
             logger.exception(e)
         logger.error(f'Failed processing spec with exception: {e}')
         return 1
 
+    logger.info('Processing completed successfully')
     return 0
 
 def main():
