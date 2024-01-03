@@ -1,0 +1,5 @@
+GLOBAL:
+  name: complex_content
+  test: 1
+REMOTE_ADDRESS: 169.254.100.100
+

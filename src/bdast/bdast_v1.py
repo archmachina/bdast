@@ -95,8 +95,28 @@ def merge_spec_envs(spec, state, all_scopes=False):
     # Extract inline env definitions. Use env vars from state for templating
     envs = spec_extract_value(spec, 'env', default={}, template_map=state.envs)
     assert_type(envs, dict, 'env is not a dictionary')
-    state.merge_envs(envs, all_scopes=all_scopes)
 
+    # Extract var definitions from file
+    env_files = spec_extract_value(spec, 'env_files', default=[], template_map=state.envs)
+    assert_type(env_files, list, 'env_files is not a list')
+
+    for file in env_files:
+        file = str(file)
+
+        if file == '':
+            raise Exception('Empty file name specified in env_files')
+
+        with open(file, 'r') as file:
+            content = yaml.safe_load(file)
+
+        if not isinstance(content, dict):
+            raise Exception(f'Yaml read from file ({file}) is not a dictionary')
+
+        # Merge vars in to existing envs dictionary
+        for key in content.keys():
+            envs[key] = str(content[key])
+
+    state.merge_envs(envs, all_scopes=all_scopes)
     logger.debug(f'envs: {envs}')
 
 def spec_extract_value(spec, key, *, template_map, failemptystr=False, default=None):

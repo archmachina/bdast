@@ -77,6 +77,8 @@ actions:
         env:
           SHOULD_SHELL: true
           # GLOBAL: 3
+        env_files:
+          - vars.yaml
 
   ping_check:
     steps:
@@ -91,6 +93,8 @@ actions:
       - ping_result
     env:
       REMOTE_ADDRESS: 169.254.255.255
+    env_files:
+      - vars.yaml
 
   build:
     steps:
