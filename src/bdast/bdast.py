@@ -13,6 +13,7 @@ import yaml
 import bdast_exception
 import bdast_v1
 
+
 def load_spec(spec_file, action_name):
     """
     Loads and parses the YAML specification from file, sets the working directory, and
@@ -58,6 +59,7 @@ def load_spec(spec_file, action_name):
     else:
         raise SpecLoadException(f"Invalid version in spec file: {version}")
 
+
 def process_args() -> int:
     """
     Processes command line arguments and calls load_spec to load the actual specification from the
@@ -66,29 +68,25 @@ def process_args() -> int:
     """
     # Create parser for command line arguments
     parser = argparse.ArgumentParser(
-        prog="bdast",
-        description="Build and Deployment Assistant",
-        exit_on_error=False
+        prog="bdast", description="Build and Deployment Assistant", exit_on_error=False
     )
 
     # Parser configuration
-    parser.add_argument("-v",
-        action="store_true",
-        dest="verbose",
-        help="Enable verbose output")
+    parser.add_argument(
+        "-v", action="store_true", dest="verbose", help="Enable verbose output"
+    )
 
-    parser.add_argument("-d",
-        action="store_true",
-        dest="debug",
-        help="Enable debug output")
+    parser.add_argument(
+        "-d", action="store_true", dest="debug", help="Enable debug output"
+    )
 
-    parser.add_argument(action="store",
+    parser.add_argument(
+        action="store",
         dest="spec",
-        help="YAML spec file containing build or deployment definition")
+        help="YAML spec file containing build or deployment definition",
+    )
 
-    parser.add_argument(action="store",
-        dest="action",
-        help="Action name")
+    parser.add_argument(action="store", dest="action", help="Action name")
 
     args = parser.parse_args()
 
@@ -110,7 +108,7 @@ def process_args() -> int:
 
     try:
         load_spec(spec_file, action_name)
-    except Exception as e: # pylint: disable=broad-exception-caught
+    except Exception as e:  # pylint: disable=broad-exception-caught
         if debug:
             logger.error(e, exc_info=True, stack_info=True)
         else:
@@ -119,6 +117,7 @@ def process_args() -> int:
 
     logger.info("Processing completed successfully")
     return 0
+
 
 def main():
     """
@@ -130,10 +129,11 @@ def main():
         ret = process_args()
         sys.stdout.flush()
         sys.exit(ret)
-    except Exception as e: # pylint: disable=broad-exception-caught
+    except Exception as e:  # pylint: disable=broad-exception-caught
         logging.getLogger(__name__).exception(e)
         sys.stdout.flush()
         sys.exit(1)
+
 
 if __name__ == "__main__":
     main()

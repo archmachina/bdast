@@ -11,9 +11,11 @@ import tempfile
 from string import Template
 import traceback
 
+
 class CommonState:
     def __init__(self, spec={}):
         self.spec = spec
+
 
 class ScopeState:
     def __init__(self, *, parent=None):
@@ -44,6 +46,7 @@ class ScopeState:
         if all_scopes and self.parent is not None:
             self.parent.merge_envs(new_envs, all_scopes=True)
 
+
 def template_if_string(val, mapping):
     if val is not None and isinstance(val, str):
         try:
@@ -54,17 +57,21 @@ def template_if_string(val, mapping):
 
     return val
 
+
 def assert_type(obj, obj_type, message):
     if not isinstance(obj, obj_type):
         raise Exception(message)
+
 
 def assert_not_none(obj, message):
     if obj is None:
         raise Exception(message)
 
+
 def assert_not_emptystr(obj, message):
     if obj is None or (isinstance(obj, str) and obj == ""):
         raise Exception(message)
+
 
 def parse_bool(obj):
     if obj is None:
@@ -75,13 +82,14 @@ def parse_bool(obj):
 
     obj = str(obj)
 
-    if obj.lower() in [ "true", "1" ]:
+    if obj.lower() in ["true", "1"]:
         return True
 
-    if obj.lower() in [ "false", "0" ]:
+    if obj.lower() in ["false", "0"]:
         return False
 
     raise Exception(f"Unparseable value ({obj}) passed to parse_bool")
+
 
 def merge_spec_envs(spec, state, all_scopes=False):
     logger = logging.getLogger(__name__)
@@ -97,7 +105,9 @@ def merge_spec_envs(spec, state, all_scopes=False):
     assert_type(envs, dict, "env is not a dictionary")
 
     # Extract var definitions from file
-    env_files = spec_extract_value(spec, "env_files", default=[], template_map=state.envs)
+    env_files = spec_extract_value(
+        spec, "env_files", default=[], template_map=state.envs
+    )
     assert_type(env_files, list, "env_files is not a list")
 
     for file in env_files:
@@ -119,6 +129,7 @@ def merge_spec_envs(spec, state, all_scopes=False):
     state.merge_envs(envs, all_scopes=all_scopes)
     logger.debug(f"envs: {envs}")
 
+
 def spec_extract_value(spec, key, *, template_map, failemptystr=False, default=None):
     # Check that we have a valid spec
     if spec is None or not isinstance(spec, dict):
@@ -136,7 +147,7 @@ def spec_extract_value(spec, key, *, template_map, failemptystr=False, default=N
             return default
 
         # Key is not present or null and no default, so raise an exception
-        raise KeyError(f"Missing key \"{key}\" in spec or value is null")
+        raise KeyError(f'Missing key "{key}" in spec or value is null')
 
     # Retrieve value
     val = spec[key]
@@ -149,7 +160,7 @@ def spec_extract_value(spec, key, *, template_map, failemptystr=False, default=N
 
         # Check if we have an empty string and should fail
         if failemptystr and val == "":
-            raise Exception("Value for key \"{key}\" is empty, but a value is required")
+            raise Exception(f'Value for key "{key}" is empty, but a value is required')
 
     # Perform string substitution for other types
     if template_map is not None and val is not None:
@@ -162,21 +173,25 @@ def spec_extract_value(spec, key, *, template_map, failemptystr=False, default=N
 
     return val
 
+
 def process_spec_v1_step_semver(step_name, step, state) -> int:
     logger = logging.getLogger(__name__)
 
     # Capture step properties
-    required = parse_bool(spec_extract_value(step, "required", default=False, template_map=state.envs))
+    required = parse_bool(
+        spec_extract_value(step, "required", default=False, template_map=state.envs)
+    )
     logger.debug(f"required: {required}")
 
     sources = spec_extract_value(step, "sources", default=[], template_map=state.envs)
     assert_type(sources, list, "step sources is not a list")
     logger.debug(f"sources: {sources}")
 
-    strip_regex = spec_extract_value(step, "strip_regex", default=["^refs/tags/", "^v"],
-        template_map=state.envs)
+    strip_regex = spec_extract_value(
+        step, "strip_regex", default=["^refs/tags/", "^v"], template_map=state.envs
+    )
     assert_type(strip_regex, list, "step strip_regex is not a list")
-    logger.debug(f"strip_regex: {strip_regex}")
+    logger.debug("strip_regex: %s", strip_regex)
 
     # Regex for identifying and splitting semver strings
     # Reference: https://semver.org/
@@ -214,7 +229,7 @@ def process_spec_v1_step_semver(step_name, step, state) -> int:
             "SEMVER_MINOR": "" if result[2] is None else result[2],
             "SEMVER_PATCH": "" if result[3] is None else result[3],
             "SEMVER_PRERELEASE": "" if result[4] is None else result[4],
-            "SEMVER_BUILDMETA": "" if result[5] is None else result[5]
+            "SEMVER_BUILDMETA": "" if result[5] is None else result[5],
         }
 
         # Determine if this is a prerelease
@@ -241,19 +256,29 @@ def process_spec_v1_step_command(step_name, step, state) -> int:
     logger = logging.getLogger(__name__)
 
     # Capture relevant properties for this step
-    step_type = str(spec_extract_value(step, "type", template_map=state.envs, failemptystr=True))
-    # logger.debug(f"type: {step_type}")
+    step_type = str(
+        spec_extract_value(step, "type", template_map=state.envs, failemptystr=True)
+    )
+    # logger.debug("type: %s", step_type)
 
-    step_shell = parse_bool(spec_extract_value(step, "shell", template_map=state.envs, default=False))
+    step_shell = parse_bool(
+        spec_extract_value(step, "shell", template_map=state.envs, default=False)
+    )
     logger.debug(f"shell: {step_shell}")
 
-    step_capture = str(spec_extract_value(step, "capture", template_map=state.envs, default=""))
+    step_capture = str(
+        spec_extract_value(step, "capture", template_map=state.envs, default="")
+    )
     logger.debug(f"capture: {step_capture}")
 
-    step_interpreter = str(spec_extract_value(step, "interpreter", template_map=state.envs, default=""))
+    step_interpreter = str(
+        spec_extract_value(step, "interpreter", template_map=state.envs, default="")
+    )
     logger.debug(f"interpreter: {step_interpreter}")
 
-    step_command = str(spec_extract_value(step, "command", template_map=None, failemptystr=True))
+    step_command = str(
+        spec_extract_value(step, "command", template_map=None, failemptystr=True)
+    )
     logger.debug(f"command: {step_command}")
 
     # Arguments to subprocess.run
@@ -261,7 +286,7 @@ def process_spec_v1_step_command(step_name, step, state) -> int:
         "env": state.envs.copy(),
         "stdout": None,
         "stderr": subprocess.STDOUT,
-        "shell": step_shell
+        "shell": step_shell,
     }
 
     # If we're capturing, stdout should come back via pipe
@@ -307,6 +332,7 @@ def process_spec_v1_step_command(step_name, step, state) -> int:
         state.merge_envs({step_capture: stdout_capture}, all_scopes=True)
         print(stdout_capture)
 
+
 def process_spec_v1_step(step_name, step, state) -> int:
     logger = logging.getLogger(__name__)
 
@@ -317,7 +343,9 @@ def process_spec_v1_step(step_name, step, state) -> int:
     merge_spec_envs(step, state)
 
     # Get parameters for this step
-    step_type = str(spec_extract_value(step, "type", template_map=state.envs, failemptystr=True))
+    step_type = str(
+        spec_extract_value(step, "type", template_map=state.envs, failemptystr=True)
+    )
     logger.debug(f"type: {step_type}")
 
     # Determine which type of step this is and process
@@ -327,6 +355,7 @@ def process_spec_v1_step(step_name, step, state) -> int:
         process_spec_v1_step_semver(step_name, step, state)
     else:
         raise Exception(f"unknown step type: {step_type}")
+
 
 def process_spec_v1_action(action_name, action, state) -> int:
     logger = logging.getLogger(__name__)
@@ -338,7 +367,9 @@ def process_spec_v1_action(action_name, action, state) -> int:
     merge_spec_envs(action, state)
 
     # Capture steps for this action
-    action_steps = spec_extract_value(action, "steps", default=[], template_map=state.envs)
+    action_steps = spec_extract_value(
+        action, "steps", default=[], template_map=state.envs
+    )
     assert_type(action_steps, list, "action steps is not a list")
     for item in action_steps:
         if isinstance(item, dict) or isinstance(item, str):
@@ -358,7 +389,9 @@ def process_spec_v1_action(action_name, action, state) -> int:
             step_name = step_ref
             step_ref = state.common.spec["steps"][step_name]
         else:
-            step_name = spec_extract_value(step_ref, "name", template_map=None, failemptystr=True)
+            step_name = spec_extract_value(
+                step_ref, "name", template_map=None, failemptystr=True
+            )
 
         # Call the processor for this step
         print("")
@@ -369,6 +402,7 @@ def process_spec_v1_action(action_name, action, state) -> int:
         print("")
         print(f"**************** END STEP {step_name}")
         print("")
+
 
 def process_spec_v1(spec, action_name) -> int:
     logger = logging.getLogger(__name__)
@@ -387,11 +421,15 @@ def process_spec_v1(spec, action_name) -> int:
     merge_spec_envs(state.common.spec, state)
 
     # Read in steps
-    steps = spec_extract_value(state.common.spec, "steps", default={}, template_map=None)
+    steps = spec_extract_value(
+        state.common.spec, "steps", default={}, template_map=None
+    )
     assert_type(steps, dict, "global steps is not a dictionary")
 
     # Read in actions
-    actions = spec_extract_value(state.common.spec, "actions", default={}, template_map=None)
+    actions = spec_extract_value(
+        state.common.spec, "actions", default={}, template_map=None
+    )
     assert_type(actions, dict, "global actions is not a dictionary")
 
     # Make sure the action name exists
@@ -404,4 +442,3 @@ def process_spec_v1(spec, action_name) -> int:
     process_spec_v1_action(action_name, actions[action_name], state)
     print("**************** END ACTION")
     print("")
-
