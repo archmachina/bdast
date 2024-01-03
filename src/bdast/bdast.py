@@ -10,8 +10,8 @@ import argparse
 import logging
 import yaml
 
-import bdast_exception
 import bdast_v1
+from bdast_exception import SpecLoadException
 
 
 def load_spec(spec_file, action_name):

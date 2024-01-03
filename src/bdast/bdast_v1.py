@@ -1,16 +1,12 @@
 import os
 import sys
-import argparse
-import json
 import re
 import subprocess
 import shlex
 import logging
-import yaml
-import tempfile
 from string import Template
-import traceback
-
+import yaml
+from bdast_exception import SpecRunException
 
 class CommonState:
     def __init__(self, spec={}):
@@ -36,7 +32,7 @@ class ScopeState:
     def merge_envs(self, new_envs, all_scopes=False):
         # Validate parameters
         if new_envs is None or not isinstance(new_envs, dict):
-            raise Exception("Invalid type passed to merge_envs. Must be a dictionary")
+            raise SpecRunException("Invalid type passed to merge_envs. Must be a dictionary")
 
         # Merge new_envs dictionary in to the current envs
         for key in new_envs.keys():
@@ -53,29 +49,29 @@ def template_if_string(val, mapping):
             template = Template(val)
             return template.substitute(mapping)
         except KeyError as e:
-            raise Exception(f"Missing key in template substitution: {e}")
+            raise SpecRunException(f"Missing key in template substitution: {e}")
 
     return val
 
 
 def assert_type(obj, obj_type, message):
     if not isinstance(obj, obj_type):
-        raise Exception(message)
+        raise SpecRunException(message)
 
 
 def assert_not_none(obj, message):
     if obj is None:
-        raise Exception(message)
+        raise SpecRunException(message)
 
 
 def assert_not_emptystr(obj, message):
     if obj is None or (isinstance(obj, str) and obj == ""):
-        raise Exception(message)
+        raise SpecRunException(message)
 
 
 def parse_bool(obj):
     if obj is None:
-        raise Exception(f"None value passed to parse_bool")
+        raise SpecRunException(f"None value passed to parse_bool")
 
     if isinstance(obj, bool):
         return obj
@@ -88,17 +84,17 @@ def parse_bool(obj):
     if obj.lower() in ["false", "0"]:
         return False
 
-    raise Exception(f"Unparseable value ({obj}) passed to parse_bool")
+    raise SpecRunException(f"Unparseable value ({obj}) passed to parse_bool")
 
 
 def merge_spec_envs(spec, state, all_scopes=False):
     logger = logging.getLogger(__name__)
 
     if not isinstance(spec, dict):
-        raise Exception("spec passed to merge_spec_envs is not a dictionary")
+        raise SpecRunException("spec passed to merge_spec_envs is not a dictionary")
 
     if not isinstance(state, ScopeState):
-        raise Exception("Invalid ScopeState passed to merge_spec_envs")
+        raise SpecRunException("Invalid ScopeState passed to merge_spec_envs")
 
     # Extract inline env definitions. Use env vars from state for templating
     envs = spec_extract_value(spec, "env", default={}, template_map=state.envs)
@@ -114,13 +110,13 @@ def merge_spec_envs(spec, state, all_scopes=False):
         file = str(file)
 
         if file == "":
-            raise Exception("Empty file name specified in env_files")
+            raise SpecRunException("Empty file name specified in env_files")
 
         with open(file, "r") as file:
             content = yaml.safe_load(file)
 
         if not isinstance(content, dict):
-            raise Exception(f"Yaml read from file ({file}) is not a dictionary")
+            raise SpecRunException(f"Yaml read from file ({file}) is not a dictionary")
 
         # Merge vars in to existing envs dictionary
         for key in content.keys():
@@ -133,11 +129,11 @@ def merge_spec_envs(spec, state, all_scopes=False):
 def spec_extract_value(spec, key, *, template_map, failemptystr=False, default=None):
     # Check that we have a valid spec
     if spec is None or not isinstance(spec, dict):
-        raise Exception(f"spec is missing or is not a dictionary")
+        raise SpecRunException(f"spec is missing or is not a dictionary")
 
     # Check type for template_map
     if template_map is not None and not isinstance(template_map, dict):
-        raise Exception("Invalid type passed as template_map")
+        raise SpecRunException("Invalid type passed as template_map")
 
     # Handle a missing key in the spec
     if key not in spec or spec[key] == None:
@@ -160,7 +156,7 @@ def spec_extract_value(spec, key, *, template_map, failemptystr=False, default=N
 
         # Check if we have an empty string and should fail
         if failemptystr and val == "":
-            raise Exception(f'Value for key "{key}" is empty, but a value is required')
+            raise SpecRunException(f'Value for key "{key}" is empty, but a value is required')
 
     # Perform string substitution for other types
     if template_map is not None and val is not None:
@@ -219,7 +215,7 @@ def process_spec_v1_step_semver(step_name, step, state) -> int:
             logger.debug(f"Source ({source}) is not a match")
             continue
 
-        logger.info(f"Semver match on {source}")
+        logger.info("Semver match on %s", source)
 
         # Assign semver components to environment vars
         env_vars = {
@@ -247,7 +243,7 @@ def process_spec_v1_step_semver(step_name, step, state) -> int:
 
     # No matches found
     if required:
-        raise Exception("No semver matches found")
+        raise SpecRunException("No semver matches found")
     else:
         logger.warning("No semver matches found")
 
@@ -264,22 +260,22 @@ def process_spec_v1_step_command(step_name, step, state) -> int:
     step_shell = parse_bool(
         spec_extract_value(step, "shell", template_map=state.envs, default=False)
     )
-    logger.debug(f"shell: {step_shell}")
+    logger.debug(f"shell: %s", step_shell)
 
     step_capture = str(
         spec_extract_value(step, "capture", template_map=state.envs, default="")
     )
-    logger.debug(f"capture: {step_capture}")
+    logger.debug("capture: %s", step_capture)
 
     step_interpreter = str(
         spec_extract_value(step, "interpreter", template_map=state.envs, default="")
     )
-    logger.debug(f"interpreter: {step_interpreter}")
+    logger.debug("interpreter: %s", step_interpreter)
 
     step_command = str(
         spec_extract_value(step, "command", template_map=None, failemptystr=True)
     )
-    logger.debug(f"command: {step_command}")
+    logger.debug("command: %s", step_command)
 
     # Arguments to subprocess.run
     subprocess_args = {
@@ -312,8 +308,8 @@ def process_spec_v1_step_command(step_name, step, state) -> int:
     if not step_shell:
         call_args = shlex.split(call_args)
 
-    logger.debug(f"Call arguments: {call_args}")
-    logger.debug(f"Subprocess args: {subprocess_args}")
+    logger.debug("Call arguments: %s", call_args)
+    logger.debug("Subprocess args: %s", subprocess_args)
 
     sys.stdout.flush()
     proc = subprocess.run(call_args, **subprocess_args)
@@ -324,7 +320,7 @@ def process_spec_v1_step_command(step_name, step, state) -> int:
         if subprocess_args["stdout"] is not None:
             print(proc.stdout.decode("ascii"))
 
-        raise Exception(f"Process exited with non-zero exit code: {proc.returncode}")
+        raise SpecRunException(f"Process exited with non-zero exit code: {proc.returncode}")
 
     elif step_capture:
         # If we're capturing output from the step, put it in the environment now
@@ -354,7 +350,7 @@ def process_spec_v1_step(step_name, step, state) -> int:
     elif step_type == "semver":
         process_spec_v1_step_semver(step_name, step, state)
     else:
-        raise Exception(f"unknown step type: {step_type}")
+        raise SpecRunException(f"unknown step type: {step_type}")
 
 
 def process_spec_v1_action(action_name, action, state) -> int:
@@ -375,16 +371,16 @@ def process_spec_v1_action(action_name, action, state) -> int:
         if isinstance(item, dict) or isinstance(item, str):
             continue
 
-        raise Exception(f"Invalid value in steps list ({str(item)})")
+        raise SpecRunException(f"Invalid value in steps list ({str(item)})")
 
     # Process steps in action
     for step_ref in action_steps:
         if isinstance(step_ref, str):
             if step_ref == "":
-                raise Exception("Empty step reference")
+                raise SpecRunException("Empty step reference")
 
             if step_ref not in state.common.spec["steps"]:
-                raise Exception(f"Reference to step that does not exist: {step_name}")
+                raise SpecRunException(f"Reference to step that does not exist: {step_name}")
 
             step_name = step_ref
             step_ref = state.common.spec["steps"][step_name]
@@ -434,7 +430,7 @@ def process_spec_v1(spec, action_name) -> int:
 
     # Make sure the action name exists
     if action_name not in actions:
-        raise Exception(f"Action name does not exist: {action_name}")
+        raise SpecRunException(f"Action name does not exist: {action_name}")
 
     # Process action
     print("")
