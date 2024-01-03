@@ -1,21 +1,73 @@
 #!/usr/bin/env python3
+'''
+Build and Deployment Assistance - This module is the entrypoint for the command line tool
+and will perform actions based on the content of a YAML specification file.
+'''
 
 import os
 import sys
 import argparse
-import json
-import re
-import subprocess
-import shlex
 import logging
 import yaml
-import tempfile
-from string import Template
-import traceback
 
 import bdast_v1
 
+class SpecLoadException(Exception):
+    '''
+    Exception representing an error with the loading of the yaml specification file
+    '''
+
+def load_spec(spec_file, action_name):
+    '''
+    Loads and parses the YAML specification from file, sets the working directory, and
+    calls the appropriate processor for the version of the specification
+    '''
+    logger = logging.getLogger(__name__)
+
+    # Check for spec file
+    if spec_file is None or spec_file == '':
+        raise SpecLoadException('Specification filename missing')
+
+    if not os.path.isfile(spec_file):
+        raise SpecLoadException('Spec file does not exist or is not a file')
+
+    # Load spec file
+    logger.info('Loading spec: %s', spec_file)
+    with open(spec_file, 'r', encoding='utf-8') as file:
+        spec = yaml.safe_load(file)
+
+    # Make sure we have a dictionary
+    if not isinstance(spec, dict):
+        raise SpecLoadException('Parsed specification is not a dictionary')
+
+    # Change directory to the spec file directory
+    dir_name = os.path.dirname(spec_file)
+    if dir_name != '':
+        logger.debug('Changing to directory: %s', dir_name)
+        os.chdir(dir_name)
+
+    logger.info('Working directory: %s', os.getcwd())
+
+    # Extract version number from the spec
+    if 'version' not in spec:
+        raise SpecLoadException('Missing version key in spec')
+
+    version = str(spec['version'])
+    logger.info('Version from specification: %s', version)
+
+    # Process spec as a specific version
+    if version == '1':
+        logger.info('Processing spec as version 1')
+        bdast_v1.process_spec_v1(spec, action_name)
+    else:
+        raise SpecLoadException(f'Invalid version in spec file: {version}')
+
 def process_args() -> int:
+    '''
+    Processes command line arguments and calls load_spec to load the actual specification from the
+    filesystem.
+    This function also performs exception handling based on command line arguments
+    '''
     # Create parser for command line arguments
     parser = argparse.ArgumentParser(
         prog='bdast',
@@ -60,74 +112,32 @@ def process_args() -> int:
     logging.basicConfig(level=level, format='%(levelname)s: %(message)s')
     logger = logging.getLogger(__name__)
 
-    # Check for spec file
-    if spec_file is None or spec_file == '':
-        logger.error('Specification file not supplied')
-        return 1
-
-    if not os.path.isfile(spec_file):
-        logger.error('Spec file does not exist or is not a file')
-        return 1
-
-    # Load spec file
-    logger.info(f'Loading spec: {spec_file}')
     try:
-        with open(spec_file, 'r') as file:
-            spec = yaml.safe_load(file)
-    except Exception as e:
+        load_spec(spec_file, action_name)
+    except Exception as e: # pylint: disable=broad-exception-caught
         if debug:
-            logger.exception(e)
-        logger.error(f'Failed to load and parse yaml spec file: {e}')
-        return 1
-
-    # Change directory to the spec file directory
-    dir_name = os.path.dirname(spec_file)
-    if dir_name != '':
-        try:
-            os.chdir(dir_name)
-        except Exception as e:
-            logger.error(f'Could not change to spec directory {dir_name}: {e}')
-            return 1
-
-    logger.info(f'Working directory: {os.getcwd()}')
-
-    # Extract version number from the spec
-    try:
-        version = str(spec.get('version'))
-        logger.info(f'Version from specification: {version}')
-    except Exception as e:
-        if debug:
-            logger.exception(e)
-        logger.error(f'Failed to read version information from spec: {e}')
-        return 1
-
-    # Process spec as a specific version
-    try:
-        if version == '1':
-            logger.info('Processing spec as version 1')
-            bdast_v1.process_spec_v1(spec, action_name)
+            logger.error(e, exc_info=True, stack_info=True)
         else:
-            logger.error(f'Invalid version in spec file: {version}')
-            return 1
-    except Exception as e:
-        if debug:
-            logger.exception(e)
-        logger.error(f'Failed processing spec with exception: {e}')
+            logger.error(e)
         return 1
 
     logger.info('Processing completed successfully')
     return 0
 
 def main():
+    '''
+    Entrypoint for the module.
+    Minor exception handling is performed, along with return code processing and
+    flushing of stdout on program exit.
+    '''
     try:
         ret = process_args()
         sys.stdout.flush()
         sys.exit(ret)
-    except Exception as e:
+    except Exception as e: # pylint: disable=broad-exception-caught
         logging.getLogger(__name__).exception(e)
         sys.stdout.flush()
         sys.exit(1)
 
 if __name__ == '__main__':
     main()
-
