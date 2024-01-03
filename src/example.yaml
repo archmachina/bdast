@@ -1,28 +1,22 @@
+---
 version: 1
 
 env:
   REMOTE_ADDRESS: 1.1.1.1
   DEFAULT_SEMVER: refs/tags/v0.1.0-rc1+test12
   BAD_SEMVER: x.x.x
+  GLOBAL: 1
 
 steps:
   semver:
     type: semver
     sources:
       - BAD_SEMVER
-      - DEFAULT_SEMVER
-    required: true
-
-  print_semver:
-    type: command
-    shell: true
-    command: |
-      echo $SEMVER_FULL
-      echo $SEMVER_MAJOR
-      echo $SEMVER_MINOR
-      echo $SEMVER_PATCH
-      echo $SEMVER_PRERELEASE
-      echo $SEMVER_BUILDMETA
+      - DEFAULT
+    required: $semver_required
+    env:
+      semver_required: true
+      DEFAULT: $DEFAULT_SEMVER
 
   ping_info:
     type: command
@@ -38,7 +32,13 @@ steps:
   ping_result:
     type: command
     shell: true
-    command: echo $PING_OUTPUT
+    interpreter: /bin/bash
+    command: |
+      if [ "$PING_OUTPUT" == "0" ] ; then
+        echo "Ping success"
+      else
+        echo "Ping failure"
+      fi
 
   pwsh_info:
     type: pwsh
@@ -59,17 +59,43 @@ steps:
 
 actions:
   semver:
+    env:
+      GLOBAL: 2
     steps:
       - semver
-      - print_semver
+      - name: print_semver
+        type: command
+        shell: $SHOULD_SHELL
+        command: |
+          echo $SEMVER_FULL
+          echo $SEMVER_MAJOR
+          echo $SEMVER_MINOR
+          echo $SEMVER_PATCH
+          echo $SEMVER_PRERELEASE
+          echo $SEMVER_BUILDMETA
+          echo $SEMVER_IS_PRERELEASE
+          echo GLOBAL:$GLOBAL
+        env:
+          SHOULD_SHELL: true
+          # GLOBAL: 3
+        env_files:
+          - vars.yaml
 
   ping_check:
-    env:
-      REMOTE_ADDRESS: 8.8.8.8
     steps:
       - ping_info
       - ping
       - ping_result
+
+  bad_ping_check:
+    steps:
+      - ping_info
+      - ping
+      - ping_result
+    env:
+      REMOTE_ADDRESS: 169.254.255.255
+    env_files:
+      - vars.yaml
 
   build:
     steps:
