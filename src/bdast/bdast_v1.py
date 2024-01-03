@@ -4,14 +4,14 @@
 import logging
 import os
 import re
-import requests
 import shlex
 import subprocess
 import sys
 from string import Template
+import requests
 
 import yaml
-from bdast_exception import SpecRunException
+from .bdast_exception import SpecRunException
 
 logger = logging.getLogger(__name__)
 
@@ -207,8 +207,13 @@ def process_spec_v1_step_github_release(step, state) -> int:
     logger.debug("payload: %s", payload)
 
     api_version = str(
-        spec_extract_value(step, "api_version", default="2022-11-28",
-        failemptystr=True, template_map=state.envs)
+        spec_extract_value(
+            step,
+            "api_version",
+            default="2022-11-28",
+            failemptystr=True,
+            template_map=state.envs,
+        )
     )
     logger.debug("api_version: %s", api_version)
 
@@ -221,7 +226,7 @@ def process_spec_v1_step_github_release(step, state) -> int:
         "Accept": "application/vnd.github.v3+json",
         "Authorization": f"token {token}",
         "Content-Type": "application/json",
-        "X-GitHub-Api-Version": api_version
+        "X-GitHub-Api-Version": api_version,
     }
 
     logger.debug("Post url: %s", url)
@@ -231,12 +236,13 @@ def process_spec_v1_step_github_release(step, state) -> int:
     logger.debug("Post payload: %s", payload)
 
     logger.info("Performing post against github")
-    response = requests.post(url, headers=headers, data=payload)
+    response = requests.post(url, timeout=(10, 30), headers=headers, data=payload)
     response.raise_for_status()
 
     logger.info("Request successful")
     logger.debug("Response code: %s", response.status_code)
     logger.debug("Response text: %s", response.text)
+
 
 def process_spec_v1_step_semver(step, state) -> int:
     # Capture step properties

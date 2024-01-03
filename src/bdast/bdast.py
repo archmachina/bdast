@@ -8,10 +8,10 @@ import argparse
 import logging
 import os
 import sys
-
-import bdast_v1
 import yaml
-from bdast_exception import SpecLoadException
+
+from . import bdast_v1
+from .bdast_exception import SpecLoadException
 
 logger = logging.getLogger(__name__)
 
