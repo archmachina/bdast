@@ -311,20 +311,30 @@ def process_spec_v1_action(action_name, action, state) -> int:
     action_steps = spec_extract_value(action, 'steps', default=[], template_map=state.envs)
     assert_type(action_steps, list, 'action steps is not a list')
     for item in action_steps:
-        assert_not_emptystr(item, 'action steps list item empty')
+        if isinstance(item, dict) or isinstance(item, str):
+            continue
 
-    logger.info(f'Steps in action: {action_steps}')
+        raise Exception(f'Invalid value in steps list ({str(item)})')
 
     # Process steps in action
-    for step_name in action_steps:
-        if step_name not in state.common.spec['steps']:
-            raise Exception(f'Reference to step that does not exist: {step_name}')
+    for step_ref in action_steps:
+        if isinstance(step_ref, str):
+            if step_ref == '':
+                raise Exception('Empty step reference')
+
+            if step_ref not in state.common.spec['steps']:
+                raise Exception(f'Reference to step that does not exist: {step_name}')
+
+            step_name = step_ref
+            step_ref = state.common.spec['steps'][step_name]
+        else:
+            step_name = spec_extract_value(step_ref, 'name', template_map=None, failemptystr=True)
 
         # Call the processor for this step
         print('')
         print(f'**************** STEP {step_name}')
 
-        process_spec_v1_step(step_name, state.common.spec['steps'][step_name], state)
+        process_spec_v1_step(step_name, step_ref, state)
 
         print('')
         print(f'**************** END STEP {step_name}')
