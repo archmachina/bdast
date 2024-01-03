@@ -83,6 +83,22 @@ def parse_bool(obj):
 
     raise Exception(f'Unparseable value ({obj}) passed to parse_bool')
 
+def merge_spec_envs(spec, state, all_scopes=False):
+    logger = logging.getLogger(__name__)
+
+    if not isinstance(spec, dict):
+        raise Exception('spec passed to merge_spec_envs is not a dictionary')
+
+    if not isinstance(state, ScopeState):
+        raise Exception('Invalid ScopeState passed to merge_spec_envs')
+
+    # Extract inline env definitions. Use env vars from state for templating
+    envs = spec_extract_value(spec, 'env', default={}, template_map=state.envs)
+    assert_type(envs, dict, 'env is not a dictionary')
+    state.merge_envs(envs, all_scopes=all_scopes)
+
+    logger.debug(f'envs: {envs}')
+
 def spec_extract_value(spec, key, *, template_map, failemptystr=False, default=None):
     # Check that we have a valid spec
     if spec is None or not isinstance(spec, dict):
@@ -278,10 +294,7 @@ def process_spec_v1_step(step_name, step, state) -> int:
     state = ScopeState(parent=state)
 
     # Merge environment variables in early
-    envs = spec_extract_value(step, 'env', default={}, template_map=state.envs)
-    assert_type(envs, dict, 'step env is not a dictionary')
-    state.merge_envs(envs)
-    logger.debug(f'envs: {envs}')
+    merge_spec_envs(step, state)
 
     # Get parameters for this step
     step_type = str(spec_extract_value(step, 'type', template_map=state.envs, failemptystr=True))
@@ -302,10 +315,7 @@ def process_spec_v1_action(action_name, action, state) -> int:
     state = ScopeState(parent=state)
 
     # Merge environment variables in early
-    envs = spec_extract_value(action, 'env', default={}, template_map=state.envs)
-    assert_type(envs, dict, 'action envs is not a dictionary')
-    state.merge_envs(envs)
-    logger.debug(f'envs: {envs}')
+    merge_spec_envs(action, state)
 
     # Capture steps for this action
     action_steps = spec_extract_value(action, 'steps', default=[], template_map=state.envs)
@@ -354,11 +364,7 @@ def process_spec_v1(spec, action_name) -> int:
     assert_not_emptystr(action_name, 'Invalid or empty action name specified')
 
     # Capture global environment variables from spec and merge
-    envs = spec_extract_value(state.common.spec, 'env', default={}, template_map=state.envs)
-    assert_type(envs, dict, 'global env is not a dictionary')
-    state.merge_envs(envs)
-
-    logger.debug(f'envs: {envs}')
+    merge_spec_envs(state.common.spec, state)
 
     # Read in steps
     steps = spec_extract_value(state.common.spec, 'steps', default={}, template_map=None)
