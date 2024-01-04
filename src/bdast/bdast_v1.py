@@ -8,9 +8,10 @@ import shlex
 import subprocess
 import sys
 from string import Template
-import requests
 
+import requests
 import yaml
+
 from .bdast_exception import SpecRunException
 
 logger = logging.getLogger(__name__)
@@ -56,7 +57,7 @@ class ScopeState:
             self.parent.merge_envs(new_envs, all_scopes=True)
 
 
-def template_if_string(val, mapping):
+def template_if_string(val, mapping) -> str:
     if val is not None and isinstance(val, str):
         try:
             template = Template(val)
@@ -86,7 +87,7 @@ def assert_not_emptystr(obj, message):
         raise SpecRunException(message)
 
 
-def parse_bool(obj):
+def parse_bool(obj) -> bool:
     if obj is None:
         raise SpecRunException("None value passed to parse_bool")
 
@@ -187,7 +188,7 @@ def spec_extract_value(spec, key, *, template_map, failemptystr=False, default=N
     return val
 
 
-def process_spec_v1_step_github_release(step, state) -> int:
+def process_spec_v1_step_github_release(step, state):
     # Capture step properties
     owner = str(
         spec_extract_value(step, "owner", failemptystr=True, template_map=state.envs)
@@ -248,7 +249,7 @@ def process_spec_v1_step_github_release(step, state) -> int:
     logger.debug("Response text: %s", response.text)
 
 
-def process_spec_v1_step_semver(step, state) -> int:
+def process_spec_v1_step_semver(step, state):
     # Capture step properties
     required = parse_bool(
         spec_extract_value(step, "required", default=False, template_map=state.envs)
@@ -331,7 +332,7 @@ def process_spec_v1_step_semver(step, state) -> int:
     logger.warning("No semver matches found")
 
 
-def process_spec_v1_step_command(step, state) -> int:
+def process_spec_v1_step_command(step, state):
     # Capture relevant properties for this step
     step_type = str(
         spec_extract_value(step, "type", template_map=state.envs, failemptystr=True)
@@ -412,7 +413,7 @@ def process_spec_v1_step_command(step, state) -> int:
         log_raw(stdout_capture)
 
 
-def process_spec_v1_step(step, state) -> int:
+def process_spec_v1_step(step, state):
     # Create a new scope state
     state = ScopeState(parent=state)
 
@@ -439,7 +440,7 @@ def process_spec_v1_step(step, state) -> int:
         raise SpecRunException(f"unknown step type: {step_type}")
 
 
-def process_spec_v1_action(action, state) -> int:
+def process_spec_v1_action(action, state):
     # Create a new scope state
     state = ScopeState(parent=state)
 
@@ -468,7 +469,7 @@ def process_spec_v1_action(action, state) -> int:
 
             if step_ref not in state.common.spec["steps"]:
                 raise SpecRunException(
-                    f"Reference to step that does not exist: {step_name}"
+                    f"Reference to step that does not exist: {step_ref}"
                 )
 
             step_name = step_ref
@@ -489,7 +490,7 @@ def process_spec_v1_action(action, state) -> int:
         log_raw("")
 
 
-def process_spec_v1(spec, action_name) -> int:
+def process_spec_v1(spec, action_name):
     # Make sure we have a dictionary for the spec
     assert_type(spec, dict, "Specification is not a dictionary")
 
