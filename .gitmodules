@@ -1,3 +1,0 @@
-[submodule "exec"]
-	path = exec
-	url = https://github.com/archmachina/cicd-exec
