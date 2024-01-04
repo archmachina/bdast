@@ -29,10 +29,13 @@ setup_args = {
     },
     'package_dir': {
         '': 'src'
-    }
+    },
+    'install_requires': [
+        'requests',
+        'PyYAML'
+    ]
 }
 
-install_requires = []
 
 if __name__ == '__main__':
-    setup(**setup_args, install_requires=install_requires, include_package_data=True)
+    setup(**setup_args, include_package_data=True)
