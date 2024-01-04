@@ -54,4 +54,3 @@ jobs:
           bdast ./entrypoint.yaml github_release -v
         env:
           SECRET_GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
