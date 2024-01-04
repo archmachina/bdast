@@ -1,0 +1,96 @@
+---
+version: "1"
+
+env:
+  DEFAULT_SEMVER: ''
+  SEMVER_REQUIRED: false
+  GITHUB_OWNER: archmachina
+  GITHUB_REPO: bdast
+
+steps:
+  semver:
+    type: semver
+    required: $SEMVER_REQUIRED
+    sources:
+      - GITHUB_REF
+      - DEFAULT_SEMVER
+
+  clean_dist:
+    type: command
+    command: rm -rf dist/
+
+  clean_env:
+    type: command
+    command: rm -rf env/
+
+  setup_env:
+    type: command
+    interpreter: /bin/bash
+    command: >
+      python3 -m venv env &&
+      source ./env/bin/activate &&
+      python3 -m pip install --upgrade pip &&
+      python3 -m pip install --upgrade setuptools build twine
+
+  build:
+    type: command
+    interpreter: /bin/bash
+    command: source ./env/bin/activate && python3 -m build
+    env:
+      BUILD_VERSION: $SEMVER_FULL
+
+actions:
+  clean:
+    steps:
+      - clean_dist
+      - clean_env
+
+  build:
+    env:
+      DEFAULT_SEMVER: 0.1.0
+    steps:
+      - clean_dist
+      - setup_env
+      - semver
+      - build
+
+  pypi_release:
+    env:
+      SEMVER_REQUIRED: true
+    steps:
+      - clean_dist
+      - setup_env
+      - semver
+      - build
+      - name: pypi_release
+        type: command
+        interpreter: /bin/bash
+        command: source ./env/bin/activate && python3 -m twine upload dist/*
+        env:
+          TWINE_USERNAME: "__token__"
+          TWINE_PASSWORD: $SECRET_PYPI_TOKEN
+
+  github_release:
+    env:
+      SEMVER_REQUIRED: true
+    steps:
+      - clean_dist
+      - setup_env
+      - semver
+      - build
+      - name: github_release
+        type: github_release
+        owner: $GITHUB_OWNER
+        repo: $GITHUB_REPO
+        token: $GITHUB_TOKEN
+        payload: |
+          {
+            "tag_name": "$SEMVER_FULL",
+            "name": "Version $SEMVER_FULL",
+            "draft": false,
+            "prerelease": $SEMVER_IS_PRERELEASE_WORD,
+            "generate_release_notes": true
+          }
+        env:
+          GITHUB_TOKEN: $SECRET_GITHUB_TOKEN
+

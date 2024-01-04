@@ -18,9 +18,15 @@ jobs:
         with:
           submodules: true
 
+      - name: python setup
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+          cache: 'pip'
+
       - name: build
         shell: bash
         run: |
-          ./entrypoint build
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          pip install -r requirements.txt && \
+          bdast ./entrypoint.yaml build -v
+

@@ -31,8 +31,8 @@ setup_args = {
         '': 'src'
     },
     'install_requires': [
-        'requests',
-        'PyYAML'
+        'requests>=2.0.0',
+        'PyYAML>=5.0.0'
     ]
 }
 
