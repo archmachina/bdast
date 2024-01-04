@@ -67,6 +67,10 @@ def template_if_string(val, mapping):
     return val
 
 
+def log_raw(msg):
+    print(msg, flush=True)
+
+
 def assert_type(obj, obj_type, message):
     if not isinstance(obj, obj_type):
         raise SpecRunException(message)
@@ -313,7 +317,7 @@ def process_spec_v1_step_semver(step, state) -> int:
             env_vars["SEMVER_IS_PRERELEASE"] = "0"
             env_vars["SEMVER_IS_PRERELEASE_WORD"] = "false"
 
-        print(f"SEMVER version information: {env_vars}")
+        log_raw(f"SEMVER version information: {env_vars}")
 
         # Merge semver vars in to environment vars
         state.merge_envs(env_vars, all_scopes=True)
@@ -395,7 +399,7 @@ def process_spec_v1_step_command(step, state) -> int:
     if proc.returncode != 0:
         # If the subprocess was called with stdout PIPE, output it here
         if subprocess_args["stdout"] is not None:
-            print(proc.stdout.decode("ascii"))
+            log_raw(proc.stdout.decode("ascii"))
 
         raise SpecRunException(
             f"Process exited with non-zero exit code: {proc.returncode}"
@@ -405,7 +409,7 @@ def process_spec_v1_step_command(step, state) -> int:
         # If we're capturing output from the step, put it in the environment now
         stdout_capture = proc.stdout.decode("ascii")
         state.merge_envs({step_capture: stdout_capture}, all_scopes=True)
-        print(stdout_capture)
+        log_raw(stdout_capture)
 
 
 def process_spec_v1_step(step, state) -> int:
@@ -475,14 +479,14 @@ def process_spec_v1_action(action, state) -> int:
             )
 
         # Call the processor for this step
-        print("")
-        print(f"**************** STEP {step_name}")
+        log_raw("")
+        log_raw(f"**************** STEP {step_name}")
 
         process_spec_v1_step(step_ref, state)
 
-        print("")
-        print(f"**************** END STEP {step_name}")
-        print("")
+        log_raw("")
+        log_raw(f"**************** END STEP {step_name}")
+        log_raw("")
 
 
 def process_spec_v1(spec, action_name) -> int:
@@ -516,8 +520,8 @@ def process_spec_v1(spec, action_name) -> int:
         raise SpecRunException(f"Action name does not exist: {action_name}")
 
     # Process action
-    print("")
-    print(f"**************** ACTION {action_name}")
+    log_raw("")
+    log_raw(f"**************** ACTION {action_name}")
     process_spec_v1_action(actions[action_name], state)
-    print("**************** END ACTION")
-    print("")
+    log_raw("**************** END ACTION")
+    log_raw("")
