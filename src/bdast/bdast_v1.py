@@ -57,7 +57,7 @@ class ScopeState:
             self.parent.merge_envs(new_envs, all_scopes=True)
 
 
-def template_if_string(val, mapping) -> str:
+def template_if_string(val, mapping):
     if val is not None and isinstance(val, str):
         try:
             template = Template(val)
