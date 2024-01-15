@@ -25,9 +25,7 @@ jobs:
 
       - name: release
         shell: bash
-        run: |
-          pip install -r requirements.txt && \
-          bdast ./entrypoint.yaml pypi_release -v
+        run: ./entrypoint pypi_release
         env:
           SECRET_PYPI_TOKEN: ${{ secrets.PYPI_TOKEN }}
 
@@ -49,8 +47,6 @@ jobs:
 
       - name: release
         shell: bash
-        run: |
-          pip install -r requirements.txt && \
-          bdast ./entrypoint.yaml github_release -v
+        run: ./entrypoint github_release
         env:
           SECRET_GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

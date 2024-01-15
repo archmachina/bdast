@@ -26,6 +26,4 @@ jobs:
 
       - name: build
         shell: bash
-        run: |
-          pip install -r requirements.txt && \
-          bdast ./entrypoint.yaml build -v
+        run: ./entrypoint build
