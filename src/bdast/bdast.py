@@ -17,7 +17,7 @@ from .bdast_exception import SpecLoadException
 logger = logging.getLogger(__name__)
 
 
-def load_spec(spec_file, action_name):
+def load_spec(spec_file, actions):
     """
     Loads and parses the YAML specification from file, sets the working directory, and
     calls the appropriate processor for the version of the specification
@@ -57,7 +57,7 @@ def load_spec(spec_file, action_name):
     # Process spec as a specific version
     if version == "1":
         logger.info("Processing spec as version 1")
-        bdast_v1.process_spec_v1(spec, action_name)
+        bdast_v1.process_spec_v1(spec, actions)
     else:
         raise SpecLoadException(f"Invalid version in spec file: {version}")
 
@@ -88,7 +88,9 @@ def process_args() -> int:
         help="YAML spec file containing build or deployment definition",
     )
 
-    parser.add_argument(action="store", dest="action", help="Action name")
+    parser.add_argument(
+        action="store", dest="actions", help="Action names", nargs=argparse.REMAINDER
+    )
 
     args = parser.parse_args()
 
@@ -96,7 +98,7 @@ def process_args() -> int:
     verbose = args.verbose
     debug = args.debug
     spec_file = args.spec
-    action_name = args.action
+    actions = [str(x) for x in args.actions]
 
     # Logging configuration
     level = logging.WARNING
@@ -108,7 +110,7 @@ def process_args() -> int:
     logging.basicConfig(level=level, format="%(levelname)s: %(message)s")
 
     try:
-        load_spec(spec_file, action_name)
+        load_spec(spec_file, actions)
     except Exception as e:  # pylint: disable=broad-exception-caught
         if debug:
             logger.error(e, exc_info=True, stack_info=True)

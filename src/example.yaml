@@ -87,6 +87,13 @@ actions:
       - ping
       - ping_result
 
+  change_remote:
+    steps:
+      - name: change_remote
+        type: command
+        capture: REMOTE_ADDRESS
+        command: echo "8.8.8.8"
+
   bad_ping_check:
     steps:
       - ping_info
