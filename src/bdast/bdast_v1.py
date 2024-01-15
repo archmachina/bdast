@@ -365,6 +365,7 @@ def process_spec_v1_step_command(step, state):
         "stdout": None,
         "stderr": subprocess.STDOUT,
         "shell": step_shell,
+        "text": True,
     }
 
     # If we're capturing, stdout should come back via pipe
@@ -380,7 +381,6 @@ def process_spec_v1_step_command(step, state):
     # If an interpreter is defined, this is the executable to call instead
     if step_interpreter != "":
         call_args = step_interpreter
-        subprocess_args["text"] = True
         subprocess_args["input"] = step_command
     else:
         call_args = step_command
@@ -400,7 +400,7 @@ def process_spec_v1_step_command(step, state):
     if proc.returncode != 0:
         # If the subprocess was called with stdout PIPE, output it here
         if subprocess_args["stdout"] is not None:
-            log_raw(proc.stdout.decode("ascii"))
+            log_raw(str(proc.stdout))
 
         raise SpecRunException(
             f"Process exited with non-zero exit code: {proc.returncode}"
@@ -408,7 +408,7 @@ def process_spec_v1_step_command(step, state):
 
     if step_capture:
         # If we're capturing output from the step, put it in the environment now
-        stdout_capture = proc.stdout.decode("ascii")
+        stdout_capture = str(proc.stdout)
         state.merge_envs({step_capture: stdout_capture}, all_scopes=True)
         log_raw(stdout_capture)
 
