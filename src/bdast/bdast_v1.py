@@ -490,7 +490,7 @@ def process_spec_v1_action(action, state):
         log_raw("")
 
 
-def process_spec_v1(spec, actions):
+def process_spec_v1(spec, action_name, action_arg):
     # Make sure we have a dictionary for the spec
     assert_type(spec, dict, "Specification is not a dictionary")
 
@@ -499,8 +499,11 @@ def process_spec_v1(spec, actions):
     state.common.spec = spec
 
     # Make sure we have a valid action name
-    for action_name in actions:
-        assert_not_emptystr(action_name, "Invalid or empty action name specified")
+    assert_not_emptystr(action_name, "Invalid or empty action name specified")
+
+    # Make sure action_arg is a string
+    action_arg = str(action_arg) if action_arg is not None else ""
+    state.envs["BDAST_ACTION_ARG"] = action_arg
 
     # Capture global environment variables from spec and merge
     merge_spec_envs(state.common.spec, state)
@@ -512,19 +515,18 @@ def process_spec_v1(spec, actions):
     assert_type(steps, dict, "global steps is not a dictionary")
 
     # Read in actions
-    spec_actions = spec_extract_value(
+    actions = spec_extract_value(
         state.common.spec, "actions", default={}, template_map=None
     )
-    assert_type(spec_actions, dict, "global actions is not a dictionary")
+    assert_type(actions, dict, "global actions is not a dictionary")
 
-    for action_name in actions:
-        # Make sure the action name exists
-        if action_name not in spec_actions:
-            raise SpecRunException(f"Action name does not exist: {action_name}")
+    # Make sure the action name exists
+    if action_name not in actions:
+        raise SpecRunException(f"Action name does not exist: {action_name}")
 
-        # Process action
-        log_raw("")
-        log_raw(f"**************** ACTION {action_name}")
-        process_spec_v1_action(spec_actions[action_name], state)
-        log_raw("**************** END ACTION")
-        log_raw("")
+    # Process action
+    log_raw("")
+    log_raw(f"**************** ACTION {action_name}")
+    process_spec_v1_action(actions[action_name], state)
+    log_raw("**************** END ACTION")
+    log_raw("")
