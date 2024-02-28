@@ -58,6 +58,32 @@ steps:
       docker -v
 
 actions:
+  capture_test:
+    steps:
+      - name: capture_info
+        type: bash
+        command: |
+          echo -e "  a\n  "
+        capture: CAPTURE_INFO
+        capture_strip: false
+
+      - name: capture_show
+        type: bash
+        command: |
+          echo "x${CAPTURE_INFO}x"
+
+      - name: capture_info2
+        type: bash
+        command: |
+          echo -e "  a\n  "
+        capture: CAPTURE_INFO
+        capture_strip: true
+
+      - name: capture_show2
+        type: bash
+        command: |
+          echo "x${CAPTURE_INFO}x"
+
   semver:
     env:
       GLOBAL: 2

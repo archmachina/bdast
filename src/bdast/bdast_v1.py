@@ -349,6 +349,11 @@ def process_spec_v1_step_command(step, state):
     )
     logger.debug("capture: %s", step_capture)
 
+    step_capture_strip = parse_bool(
+        spec_extract_value(step, "capture_strip", template_map=state.envs, default=False)
+    )
+    logger.debug("capture_strip: %s", step_capture_strip)
+
     step_interpreter = str(
         spec_extract_value(step, "interpreter", template_map=state.envs, default="")
     )
@@ -409,6 +414,9 @@ def process_spec_v1_step_command(step, state):
     if step_capture:
         # If we're capturing output from the step, put it in the environment now
         stdout_capture = str(proc.stdout)
+        if step_capture_strip:
+            stdout_capture = stdout_capture.strip()
+
         state.merge_envs({step_capture: stdout_capture}, all_scopes=True)
         log_raw(stdout_capture)
 
