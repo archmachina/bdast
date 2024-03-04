@@ -8,6 +8,25 @@ env:
   GLOBAL: 1
 
 steps:
+  dep_test_a:
+    type: bash
+    depends_on:
+      - setup
+    command: echo dep_test_a
+
+  dep_test_b:
+    type: bash
+    depends_on:
+      - dep_test_a
+    command: echo dep_test_b
+
+  dep_test_c:
+    type: bash
+    depends_on:
+      - dep_test_b
+      - dep_test_a
+    command: echo dep_test_c
+
   semver:
     type: semver
     sources:
@@ -134,3 +153,13 @@ actions:
     steps:
       - pwsh_info
       - docker_info
+
+  dep_test:
+    steps:
+      - name: setup
+        type: bash
+        command: echo setup
+      - name: dep_test_a
+        type: bash
+        command: echo override dep_test_a
+      - dep_test_c

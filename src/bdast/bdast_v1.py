@@ -8,6 +8,7 @@ import shlex
 import subprocess
 import sys
 from string import Template
+from enum import Enum
 
 import requests
 import yaml
@@ -17,12 +18,35 @@ from .bdast_exception import SpecRunException
 logger = logging.getLogger(__name__)
 
 
+class StepState(Enum):
+    NOT_STARTED = 0
+    PENDING = 1
+    COMPLETED = 2
+
+
 class CommonState:
     def __init__(self, spec=None):
         if spec is None:
             spec = {}
 
         self.spec = spec
+        self.step_state = {}
+
+    def get_step_state(self, step_name):
+        if step_name not in self.step_state:
+            self.step_state[step_name] = StepState.NOT_STARTED
+
+        return self.step_state[step_name]
+
+    def touch_step(self, step_name):
+        current_state = self.get_step_state(step_name)
+        if current_state == StepState.NOT_STARTED:
+            self.step_state[step_name] = StepState.PENDING
+
+    def mark_step_complete(self, step_name):
+        current_state = self.get_step_state(step_name)
+        if current_state != StepState.COMPLETED:
+            self.step_state[step_name] = StepState.COMPLETED
 
 
 class ScopeState:
@@ -103,6 +127,22 @@ def parse_bool(obj) -> bool:
         return False
 
     raise SpecRunException(f"Unparseable value ({obj}) passed to parse_bool")
+
+
+def validate_str_list(obj, allow_empty_str=True) -> list:
+    if not isinstance(obj, list):
+        raise SpecRunException(f"Invalid value while parsing list ({obj})")
+
+    for item in obj:
+        if not isinstance(item, str):
+            raise SpecRunException(
+                f"Invalid type in list. Expected str, got {type(item)}"
+            )
+
+        if not allow_empty_str and item == "":
+            raise SpecRunException("Empty string in list not permitted")
+
+    return obj
 
 
 def merge_spec_envs(spec, state, all_scopes=False):
@@ -350,7 +390,9 @@ def process_spec_v1_step_command(step, state):
     logger.debug("capture: %s", step_capture)
 
     step_capture_strip = parse_bool(
-        spec_extract_value(step, "capture_strip", template_map=state.envs, default=False)
+        spec_extract_value(
+            step, "capture_strip", template_map=state.envs, default=False
+        )
     )
     logger.debug("capture_strip: %s", step_capture_strip)
 
@@ -421,15 +463,58 @@ def process_spec_v1_step_command(step, state):
         log_raw(stdout_capture)
 
 
-def process_spec_v1_step(step, state):
+def process_spec_v1_step(step_name, step, state):
     # Create a new scope state
-    state = ScopeState(parent=state)
+    parent_state = state
+    state = ScopeState(parent=parent_state)
 
     # Validate action type
     assert_type(step, dict, "Step is not a dictionary")
 
     # Merge environment variables in early
     merge_spec_envs(step, state)
+
+    #
+    # Handle dependencies
+    #
+
+    # Record this step as having been seen
+    state.common.touch_step(step_name)
+
+    # Capture dependencies for this step
+    step_depends_on = validate_str_list(
+        spec_extract_value(step, "depends_on", template_map=state.envs, default=[]),
+        allow_empty_str=False,
+    )
+
+    # Process dependencies
+    # Call step processing for any steps that haven't been completed
+    # Anything that is already pending is an error as there is already a function call handling this and means
+    # there is a circular dependency
+    for dep_name in step_depends_on:
+        dep_state = state.common.get_step_state(dep_name)
+
+        if dep_state == StepState.COMPLETED:
+            continue
+
+        if dep_state == StepState.PENDING:
+            raise SpecRunException(
+                f"Circular reference in step dependencies - Step {dep_name} already visited, but not completed"
+            )
+
+        # Step has not been started, so we'll start processing of this step
+        if dep_name not in state.common.spec["steps"]:
+            raise SpecRunException(f"Reference to step that does not exist: {dep_name}")
+
+        dep_ref = state.common.spec["steps"][dep_name]
+        process_spec_v1_step(dep_name, dep_ref, parent_state)
+
+    #
+    # End dependency handling
+    #
+
+    log_raw("")
+    log_raw(f"**************** STEP {step_name}")
 
     # Get parameters for this step
     step_type = str(
@@ -446,6 +531,13 @@ def process_spec_v1_step(step, state):
         process_spec_v1_step_github_release(step, state)
     else:
         raise SpecRunException(f"unknown step type: {step_type}")
+
+    log_raw("")
+    log_raw(f"**************** END STEP {step_name}")
+    log_raw("")
+
+    # Record this step as having been completed
+    state.common.mark_step_complete(step_name)
 
 
 def process_spec_v1_action(action, state):
@@ -488,14 +580,7 @@ def process_spec_v1_action(action, state):
             )
 
         # Call the processor for this step
-        log_raw("")
-        log_raw(f"**************** STEP {step_name}")
-
-        process_spec_v1_step(step_ref, state)
-
-        log_raw("")
-        log_raw(f"**************** END STEP {step_name}")
-        log_raw("")
+        process_spec_v1_step(step_name, step_ref, state)
 
 
 def process_spec_v1(spec, action_name, action_arg):
