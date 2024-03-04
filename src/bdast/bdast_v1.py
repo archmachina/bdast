@@ -464,12 +464,12 @@ def process_spec_v1_step_command(step, state):
 
 
 def process_spec_v1_step(step_name, step, state):
+    # Validate action type
+    assert_type(step, dict, "Step is not a dictionary")
+
     # Create a new scope state
     parent_state = state
     state = ScopeState(parent=parent_state)
-
-    # Validate action type
-    assert_type(step, dict, "Step is not a dictionary")
 
     # Merge environment variables in early
     merge_spec_envs(step, state)
@@ -508,6 +508,11 @@ def process_spec_v1_step(step_name, step, state):
 
         dep_ref = state.common.spec["steps"][dep_name]
         process_spec_v1_step(dep_name, dep_ref, parent_state)
+
+
+    # Dependencies may have captured a var, so merge parent vars in to a new scope state
+    state = ScopeState(parent=parent_state)
+    merge_spec_envs(step, state)
 
     #
     # End dependency handling

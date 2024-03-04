@@ -19,13 +19,17 @@ steps:
     depends_on:
       - dep_test_a
     command: echo dep_test_b
+    capture: CAPTURE
+    capture_strip: true
 
   dep_test_c:
     type: bash
     depends_on:
       - dep_test_b
       - dep_test_a
-    command: echo dep_test_c
+    command: |
+      echo dep_test_c
+      echo "CAPTURE: $CAPTURE"
 
   semver:
     type: semver
