@@ -13,7 +13,7 @@ from enum import Enum
 import requests
 import yaml
 
-from .bdast_exception import SpecRunException
+from .exception import SpecRunException
 
 logger = logging.getLogger(__name__)
 
