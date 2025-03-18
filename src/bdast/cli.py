@@ -121,6 +121,7 @@ def process_template(args):
 
     """))
 
+
 def process_wrapper(args):
     """
     Process the 'wrapper' subcommand.
@@ -204,7 +205,8 @@ def process_args() -> int:
     sub_run.add_argument(
         action="store",
         dest="action_arg",
-        help="Action argument", nargs=argparse.REMAINDER,
+        help="Action argument",
+        nargs=argparse.REMAINDER,
     )
 
     # Parse command line arguments
