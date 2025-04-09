@@ -12,6 +12,7 @@ from enum import Enum
 
 import requests
 import yaml
+import obslib
 
 from .exception import SpecRunException
 
