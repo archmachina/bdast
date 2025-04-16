@@ -7,6 +7,7 @@ import re
 import shlex
 import subprocess
 import sys
+import copy
 from string import Template
 from enum import Enum
 
@@ -14,220 +15,476 @@ import requests
 import yaml
 import obslib
 
-from .exception import SpecRunException
+from .exception import SpecRunException,SpecLoadException
 
 logger = logging.getLogger(__name__)
 
+class ActionState:
+    def __init__(self, action_vars):
 
-class StepState(Enum):
-    NOT_STARTED = 0
-    PENDING = 1
-    COMPLETED = 2
+        # Check incoming parameters
+        if not isinstance(action_vars, dict):
+            raise SpecRunException("Invalid action_vars passed to ActionState")
+
+        self.vars = {}
+        self.update_vars(action_vars)
+
+    def update_vars(self, new_vars):
+
+        # Check parameters
+        if not isinstance(new_vars, dict):
+            raise SpecRunException("Invalid vars passed to ActionState update_vars")
+
+        # Update vars
+        for name in new_vars:
+            self.vars[name] = copy.deepcopy(new_vars[name])
+
+        # Add environment vars
+        self.vars["env"] = os.environ.copy()
+
+        # Recreate the template session
+        self.session = obslib.Session(template_vars=obslib.eval_vars(self.vars))
+
+def process_step_command(action_state, impl_config, step_type):
+
+    # Check incoming parameters
+    if not isinstance(action_state, ActionState):
+        raise SpecRunException("Invalid ActionState passed to BdastStepCommand run")
+
+    # Shell - Whether to use shell parsing for the command
+    shell = obslib.extract_property(impl_config, "shell", default=False, optional=True)
+    shell = action_state.session.resolve(shell, bool)
+
+    # Interpreter - whether to use a specific interpreter for the command
+    interpreter = obslib.extract_property(impl_config, "interpreter", default="", optional=True)
+    interpreter = action_state.session.resolve(interpreter, str)
+
+    # Capture - whether to capture the command output
+    capture = obslib.extract_property(impl_config, "capture", default="", optional=True)
+    capture = action_state.session.resolve(capture, (str, type(None)))
+    if capture is None:
+        capture = ""
+
+    # Capture_strip - whether to run 'strip' against the output
+    capture_strip = obslib.extract_property(impl_config, "capture_strip", default=False, optional=True)
+    capture_strip = action_state.session.resolve(capture_strip, bool)
+
+    # Command line
+    cmd = obslib.extract_property(impl_config, "cmd")
+    cmd = action_state.session.resolve(cmd, str)
+
+    # Environment variables
+    new_envs = obslib.extract_property(impl_config, "envs", default={}, optional=True)
+    new_envs = action_state.session.resolve(new_envs, (dict, type(None)))
+    if new_envs is None:
+        new_envs = {}
+
+    envs = os.environ.copy()
+    for name in new_envs:
+        envs[name] = str(new_envs[name])
+
+    # Arguments to subprocess.run
+    subprocess_args = {
+        "env": envs,
+        "stdout": None,
+        "stderr": subprocess.STDOUT,
+        "shell": shell,
+        "text": True,
+    }
+
+    # If we're capturing, stdout should come back via pipe
+    if capture != "":
+        subprocess_args["stdout"] = subprocess.PIPE
+
+    # Override interpreter if the type is bash or pwsh
+    if step_type == "command":
+        pass
+    elif step_type == "pwsh":
+        interpreter = "pwsh -noni -c -"
+    elif step_type == "bash":
+        interpreter = "bash"
+    elif step_type != "":
+        raise SpecRunException(f"Unknown cmd type on command: {step_type}")
+
+    # If an interpreter is defined, this is the executable to call instead
+    if interpreter != "":
+        call_args = interpreter
+        subprocess_args["input"] = cmd
+    else:
+        call_args = cmd
+        subprocess_args["stdin"] = subprocess.DEVNULL
+
+    # If we're not using shell interpretation, then split the command in to
+    # a list of strings
+    if not shell:
+        call_args = shlex.split(call_args)
+
+    logger.debug("Call arguments: %s", call_args)
+    logger.debug("Subprocess args: %s", subprocess_args)
+
+    sys.stdout.flush()
+    proc = subprocess.run(call_args, check=False, **subprocess_args)
+
+    # Check if the process failed
+    if proc.returncode != 0:
+        # If the subprocess was called with stdout PIPE, output it here
+        if subprocess_args["stdout"] is not None:
+            log_raw(str(proc.stdout))
+
+        raise SpecRunException(f"Process exited with non-zero exit code: {proc.returncode}")
+
+    if capture != "":
+        # If we're capturing output from the step, put it in the environment now
+        stdout_capture = str(proc.stdout)
+
+        if capture_strip:
+            stdout_capture = stdout_capture.strip()
+
+        action_state.update_vars({ capture: stdout_capture })
+
+        log_raw(stdout_capture)
 
 
-class CommonState:
-    def __init__(self, spec=None):
-        if spec is None:
-            spec = {}
+class BdastStepSemver:
+    def __init__(self, step_def):
 
-        self.spec = spec
-        self.step_state = {}
-
-    def get_step_state(self, step_name):
-        if step_name not in self.step_state:
-            self.step_state[step_name] = StepState.NOT_STARTED
-
-        return self.step_state[step_name]
-
-    def touch_step(self, step_name):
-        current_state = self.get_step_state(step_name)
-        if current_state == StepState.NOT_STARTED:
-            self.step_state[step_name] = StepState.PENDING
-
-    def mark_step_complete(self, step_name):
-        current_state = self.get_step_state(step_name)
-        if current_state != StepState.COMPLETED:
-            self.step_state[step_name] = StepState.COMPLETED
+        # Check incoming parameters
+        if not isinstance(step_def, dict):
+            raise SpecRunException("Invalid step definition passed to BdastStepSemver")
 
 
-class ScopeState:
-    def __init__(self, *, parent=None):
-        self.parent = parent
+    def run(self, action_state):
 
-        # Copy parent vars, if specified
-        if self.parent is not None:
-            # Create a new env scope, independent of the parents env vars
-            self.envs = self.parent.envs.copy()
-            self.common = self.parent.common
-
-            return
-
-        # Create a new env state and common state
-        self.envs = os.environ.copy()
-        self.common = CommonState()
-
-    def merge_envs(self, new_envs, all_scopes=False):
-        # Validate parameters
-        if new_envs is None or not isinstance(new_envs, dict):
-            raise SpecRunException(
-                "Invalid type passed to merge_envs. Must be a dictionary"
-            )
-
-        # Merge new_envs dictionary in to the current envs
-        for key in new_envs.keys():
-            self.envs[key] = str(new_envs[key])
-
-        # Call merge for parent, if all_scopes required
-        if all_scopes and self.parent is not None:
-            self.parent.merge_envs(new_envs, all_scopes=True)
+        # Check incoming parameters
+        if not isinstance(action_state, ActionState):
+            raise SpecRunException("Invalid ActionState passed to BdastStepSemver run")
 
 
-def template_if_string(val, mapping):
-    if val is not None and isinstance(val, str):
-        try:
-            template = Template(val)
-            return template.substitute(mapping)
-        except KeyError as e:
-            raise SpecRunException(f"Missing key in template substitution: {e}") from e
+class BdastStepNop:
+    def __init__(self, step_def):
 
-    return val
+        # Check incoming parameters
+        if not isinstance(step_def, dict):
+            raise SpecRunException("Invalid step definition passed to BdastStepNop")
+
+    def run(self, action_state):
+
+        # Check incoming parameters
+        if not isinstance(action_state, ActionState):
+            raise SpecRunException("Invalid ActionState passed to BdastStepNop run")
+
+class BdastStep:
+    def __init__(self, step_def, session):
+
+        # Check incoming parameters
+        if not isinstance(step_def, dict):
+            raise SpecRunException("Spec provided to BdastStep is not a dictionary")
+
+        if not isinstance(session, obslib.Session):
+            raise SpecRunException("Invalid obslib Session passed to BdastStep")
+
+        step_def = step_def.copy()
+
+        # Extract dependency properties
+        self.depends_on = obslib.extract_property(step_def, "depends_on", default=[], optional=True)
+        self.depends_on = session.resolve(self.depends_on, (list, type(None)))
+        if self.depends_on is None:
+            self.depends_on = []
+        self.depends_on = set([obslib.coerce_value(x, str) for x in self.depends_on])
+
+        self.required_by = obslib.extract_property(step_def, "required_by", default=[], optional=True)
+        self.required_by = session.resolve(self.required_by, (list, type(None)))
+        if self.required_by is None:
+            self.required_by = []
+        self.required_by = set([obslib.coerce_value(x, str) for x in self.required_by])
+
+        self.before = obslib.extract_property(step_def, "before", default=[], optional=True)
+        self.before = session.resolve(self.before, (list, type(None)))
+        if self.before is None:
+            self.before = []
+        self.before = set([obslib.coerce_value(x, str) for x in self.before])
+
+        self.after = obslib.extract_property(step_def, "after", default=[], optional=True)
+        self.after = session.resolve(self.after, (list, type(None)))
+        if self.after is None:
+            self.after = []
+        self.after = set([obslib.coerce_value(x, str) for x in self.after])
+
+        # There should be a single key left on the step, which will
+        # be the step type to run.
+        if len(step_def) < 1:
+            raise SpecLoadException("Missing step type on step")
+
+        if len(step_def) > 1:
+            raise SpecLoadException(f"Too many keys remaining on step. Unknown step type. Keys: {step_def.keys()}")
+
+        # Extract the step type
+        self._step_type = list(step_def.keys())[0]
+        if not isinstance(self._step_type, str) or self._step_type == "":
+            raise SpecLoadException("Empty or non-string step name on step")
+
+        # Extract the implementation specific configuration
+        self._impl_config = obslib.extract_property(step_def, self._step_type, default={})
+        self._impl_config = session.resolve(self._impl_config, (dict, type(None)), depth=0)
+        if self._impl_config is None:
+            self._impl_config = {}
+
+    def run(self, action_state):
+
+        # Check incoming parameters
+        if not isinstance(action_state, ActionState):
+            raise SpecRunException("Invalid ActionState passed to BdastStep run")
+
+        # Load the specific step type here
+        if self._step_type in ("command", "bash", "pwsh"):
+            process_step_command(action_state, self._impl_config, self._step_type)
+        elif self._step_type == "semver":
+            process_step_semver(action_state, self._impl_config)
+        elif self._step_type == "nop":
+            process_step_nop(action_state, self._impl_config)
+        else:
+            raise SpecRunException(f"unknown step type: {self._step_type}")
+
+        # Make sure the implementation extracted all properties and there are
+        # no remaining unknown properties
+        if len(self._impl_config) > 0:
+            raise SpecLoadException(f"Unknown properties in step config: {step_subobj.keys()}")
+
+
+class BdastSpec:
+    def __init__(self, spec):
+
+        # Check incoming values
+        if not isinstance(spec, dict):
+            raise SpecRunException("Spec supplied to BdastSpec is not a dictionary")
+
+        # Reference to the deserialised specification
+        self._spec = copy.deepcopy(spec)
+
+        # Create a basic obslib session with no vars
+        self._session = obslib.Session(template_vars={})
+
+        # Read the global vars from the spec file
+        self._vars = obslib.extract_property(self._spec, "vars", default={}, optional=True)
+        self._vars = self._session.resolve(self._vars, (dict, type(None)), depth=0)
+        if self._vars is None:
+            self._vars = {}
+
+        # TODO: Read vars from a file
+
+        # Create a new obslib session with vars read from the spec and files
+        self._session = obslib.Session(template_vars=obslib.eval_vars(self._vars))
+
+        # Read the actions from the spec
+        self._actions = obslib.extract_property(self._spec, "actions", default={}, optional=True)
+        self._actions = self._session.resolve(self._actions, (dict, type(None)), depth=1)
+        if self._actions is None:
+            self._actions = {}
+
+        # Read the steps from the spec
+        self._steps = obslib.extract_property(self._spec, "steps", default={}, optional=True)
+        self._steps = self._session.resolve(self._steps, (dict, type(None)), depth=1)
+        if self._steps is None:
+            self._steps = {}
+
+    def run(self, action_name, action_arg):
+
+        # Check incoming values
+        if not isinstance(action_name, str) or action_name == "":
+            raise SpecRunException("Invalid action name passed to SpecAction")
+
+        if not isinstance(action_arg, str):
+            raise SpecRunException("Invalid action arg passed to SpecAction")
+
+        # Retrieve the action. Make it a copy so we can check for invalid properties
+        # without changing the original
+        if action_name not in self._actions:
+            raise SpecLoadException(f"Action name '{action_name}' does not exist")
+
+        action = copy.deepcopy(self._actions[action_name])
+
+        # Extract vars from the action to merge in to the working vars
+        action_vars = obslib.extract_property(action, "vars", default={}, optional=True)
+        action_vars = self._session.resolve(action_vars, (dict, type(None)), depth=0)
+        if action_vars is None:
+            action_vars = {}
+
+        # Extract steps from the action
+        action_steps = obslib.extract_property(action, "steps", default=[], optional=True)
+        action_steps = self._session.resolve(action_steps, (list, type(None)), depth=1)
+        if action_steps is None:
+            action_steps = []
+
+        # Validate that there are no unknown properties for the action
+        if len(action.keys()) > 0:
+            raise SpecLoadException(f"Invalid properties on action: {action.keys()}")
+
+        ########
+        # Here we will check for duplicate step name references (seen_step_names), preserve the
+        # order of steps from the action (step_order), create a queue for processing dependencies
+        # (step_queue), and create a working copy of the global steps, which includes the
+        # ephemeral steps (step_library)
+        seen_step_names = set()
+        step_order = []
+        step_queue = []
+        step_library = self._steps.copy()
+
+        for step_item in action_steps:
+
+            if isinstance(step_item, str):
+
+                # If it's a string, it's a reference to a global step
+                step_name = step_item
+
+                # Make sure the step name exists globally
+                # Intentionally check 'self._steps' as we want to avoid check against names defined inline
+                if step_item not in self._steps:
+                    raise SpecLoadException(f"Step '{step_item}' does not exist")
+
+            elif isinstance(step_item, dict):
+
+                # If it's a dict, then it is an inline definition of a step
+                # Extract (/remove) the name from the step definition
+                step_name = obslib.extract_property(step_item, "name")
+                step_name = self._session.resolve(step_name, str)
+
+                # Check that this step name isn't a global step. Disallow shadowing of
+                # global steps as this would just be confusing.
+                if step_name in self._steps:
+                    raise SpecLoadException(f"Inline step has identical name to global step: {step_name}")
+
+                # Store the inline step in the step_library
+                step_library[step_name] = step_item
+
+            else:
+                raise SpecLoadException(f"Invalid step defined in action with type {type(step_item)}")
+
+            # Make sure there are no duplicate step references
+            # This is because a step will implicitly depend on the prior when defined in the
+            # action steps, so duplicate names will create an unresolvable set of dependencies
+            if step_name in seen_step_names:
+                raise SpecLoadException(f"Duplicate step name reference in action: {step_name}")
+
+            seen_step_names.add(step_name)
+
+            # Store the name in step_order, so that dependencies can be updated later
+            step_queue.append(step_name)
+            step_order.append(step_name)
+
+        ########
+        # Find all reachable steps and ensure they are present in the active_step_map
+        # Also, create a BdastStep for each of the reachable steps (in active_step_map)
+        active_step_map = {}
+        while len(step_queue) > 0:
+            step_name = step_queue.pop(0)
+
+            # Make sure this step has a definition
+            if step_name not in step_library:
+                raise SpecLoadException(f"Reference to non-existant step: {step_name}")
+
+            if step_name in active_step_map:
+                # We've already processed this step_name, so skip
+                continue
+
+            # Create a BdastStep and save it in the map
+            active_step_map[step_name] = BdastStep(step_library[step_name], self._session)
+
+            # Check depends_on and required_by. before and after do not implicitly load
+            # a step
+            for item in active_step_map[step_name].depends_on:
+                step_queue.append(item)
+
+            for item in active_step_map[step_name].required_by:
+                step_queue.append(item)
+
+        # Now we have active_step_map, which includes all of the reachable steps
+
+        ########
+        # Normalise all of the dependencies and dependents for each step
+        #
+        # Move all of the dependencies to 'depends_on' to make later processing
+        # easier
+        for step_name in active_step_map:
+            step_obj = active_step_map[step_name]
+
+            # Add any 'after' references to 'depends_on', it the item exists
+            # (after is a weak dependency - Only applies if the target step is going
+            # to be run)
+            for item in step_obj.after:
+                if item in active_step_map:
+                    step_obj.depends_on.add(item)
+
+            step_obj.after.clear()
+
+            # Convert a 'before' reference on this step to a 'depends_on'
+            # reference on the referenced step
+            for item in step_obj.before:
+                if item in active_step_map:
+                    active_step_map[item].depends_on.add(step_name)
+
+            step_obj.before.clear()
+
+            # Convert a 'required_by' reference on this step to a 'depends_on'
+            # reference on the referenced step
+            for item in step_obj.required_by:
+                if item in active_step_map:
+                    active_step_map[item].depends_on.add(step_name)
+
+            step_obj.required_by.clear()
+
+        ########
+        # Apply ordering from step_order to steps
+        prev_name = None
+        for step_name in step_order:
+            if prev_name is not None:
+                active_step_map[step_name].depends_on.add(prev_name)
+
+            prev_name = step_name
+
+        ########
+        # Process each step
+        completed = set()
+        action_state = ActionState(self._vars)
+        while len(active_step_map) > 0:
+            # Find a step that can be run
+            step_match = None
+
+            for step_name in active_step_map:
+                step_obj = active_step_map[step_name]
+
+                # Make sure any completed steps are removed from dependencies
+                step_obj.depends_on.difference_update(completed)
+
+                if len(step_obj.depends_on) == 0:
+                    # Found a step that can be run
+                    step_match = step_name
+                    break
+
+            # If we found nothing to run, then there may be a circular dependency
+            if step_match is None:
+                log_raw("Found steps with unresolvable dependencies:")
+                for step_name in active_step_map:
+                    log_raw(f"{step_name}: {active_step_map[step_name].depends_on}")
+
+                raise SpecRunException(f"Could not resolve step dependencies")
+
+            # Run the step
+            log_raw("")
+            log_raw(f"**************** STEP {step_match}")
+
+            active_step_map[step_match].run(action_state)
+
+            log_raw("")
+            log_raw(f"**************** END STEP {step_match}")
+            log_raw("")
+
+            # Record the step as completed
+            completed.add(step_match)
+            active_step_map.pop(step_match)
 
 
 def log_raw(msg):
     print(msg, flush=True)
-
-
-def assert_type(obj, obj_type, message):
-    if not isinstance(obj, obj_type):
-        raise SpecRunException(message)
-
-
-def assert_not_none(obj, message):
-    if obj is None:
-        raise SpecRunException(message)
-
-
-def assert_not_emptystr(obj, message):
-    if obj is None or (isinstance(obj, str) and obj == ""):
-        raise SpecRunException(message)
-
-
-def parse_bool(obj) -> bool:
-    if obj is None:
-        raise SpecRunException("None value passed to parse_bool")
-
-    if isinstance(obj, bool):
-        return obj
-
-    obj = str(obj)
-
-    if obj.lower() in ["true", "1"]:
-        return True
-
-    if obj.lower() in ["false", "0"]:
-        return False
-
-    raise SpecRunException(f"Unparseable value ({obj}) passed to parse_bool")
-
-
-def validate_str_list(obj, allow_empty_str=True) -> list:
-    if not isinstance(obj, list):
-        raise SpecRunException(f"Invalid value while parsing list ({obj})")
-
-    for item in obj:
-        if not isinstance(item, str):
-            raise SpecRunException(
-                f"Invalid type in list. Expected str, got {type(item)}"
-            )
-
-        if not allow_empty_str and item == "":
-            raise SpecRunException("Empty string in list not permitted")
-
-    return obj
-
-
-def merge_spec_envs(spec, state, all_scopes=False):
-    if not isinstance(spec, dict):
-        raise SpecRunException("spec passed to merge_spec_envs is not a dictionary")
-
-    if not isinstance(state, ScopeState):
-        raise SpecRunException("Invalid ScopeState passed to merge_spec_envs")
-
-    # Extract inline env definitions. Use env vars from state for templating
-    envs = spec_extract_value(spec, "env", default={}, template_map=state.envs)
-    assert_type(envs, dict, "env is not a dictionary")
-
-    # Extract var definitions from file
-    env_files = spec_extract_value(
-        spec, "env_files", default=[], template_map=state.envs
-    )
-    assert_type(env_files, list, "env_files is not a list")
-
-    for file in env_files:
-        file = str(file)
-
-        if file == "":
-            raise SpecRunException("Empty file name specified in env_files")
-
-        with open(file, "r", encoding="utf-8") as file:
-            content = yaml.safe_load(file)
-
-        if not isinstance(content, dict):
-            raise SpecRunException(f"Yaml read from file ({file}) is not a dictionary")
-
-        # Merge vars in to existing envs dictionary
-        for key in content.keys():
-            envs[key] = str(content[key])
-
-    state.merge_envs(envs, all_scopes=all_scopes)
-    logger.debug("envs: %s", envs)
-
-
-def spec_extract_value(spec, key, *, template_map, failemptystr=False, default=None):
-    # Check that we have a valid spec
-    if spec is None or not isinstance(spec, dict):
-        raise SpecRunException("spec is missing or is not a dictionary")
-
-    # Check type for template_map
-    if template_map is not None and not isinstance(template_map, dict):
-        raise SpecRunException("Invalid type passed as template_map")
-
-    # Handle a missing key in the spec
-    if key not in spec or spec[key] is None:
-        # Key is not present or the value is null/None
-        # Return the default, if specified
-        if default is not None:
-            return default
-
-        # Key is not present or null and no default, so raise an exception
-        raise KeyError(f'Missing key "{key}" in spec or value is null')
-
-    # Retrieve value
-    val = spec[key]
-
-    # string specific processing
-    if val is not None and isinstance(val, str):
-        # Template the string
-        if template_map is not None:
-            val = template_if_string(val, template_map)
-
-        # Check if we have an empty string and should fail
-        if failemptystr and val == "":
-            raise SpecRunException(
-                f'Value for key "{key}" is empty, but a value is required'
-            )
-
-    # Perform string substitution for other types
-    if template_map is not None and val is not None:
-        if isinstance(val, list):
-            val = [template_if_string(x, template_map) for x in val]
-
-        if isinstance(val, dict):
-            for val_key in val.keys():
-                val[val_key] = template_if_string(val[val_key], template_map)
-
-    return val
-
 
 def process_spec_step_github_release(step, state):
     # Capture step properties
@@ -292,7 +549,7 @@ def process_spec_step_github_release(step, state):
 
 def process_spec_step_semver(step, state):
     # Capture step properties
-    required = parse_bool(
+    required = obslib.parse_bool(
         spec_extract_value(step, "required", default=False, template_map=state.envs)
     )
     logger.debug("required: %s", required)
@@ -372,223 +629,6 @@ def process_spec_step_semver(step, state):
 
     logger.warning("No semver matches found")
 
-
-def process_spec_step_command(step, state):
-    # Capture relevant properties for this step
-    step_type = str(
-        spec_extract_value(step, "type", template_map=state.envs, failemptystr=True)
-    )
-    # logger.debug("type: %s", step_type)
-
-    step_shell = parse_bool(
-        spec_extract_value(step, "shell", template_map=state.envs, default=False)
-    )
-    logger.debug("shell: %s", step_shell)
-
-    step_capture = str(
-        spec_extract_value(step, "capture", template_map=state.envs, default="")
-    )
-    logger.debug("capture: %s", step_capture)
-
-    step_capture_strip = parse_bool(
-        spec_extract_value(
-            step, "capture_strip", template_map=state.envs, default=False
-        )
-    )
-    logger.debug("capture_strip: %s", step_capture_strip)
-
-    step_interpreter = str(
-        spec_extract_value(step, "interpreter", template_map=state.envs, default="")
-    )
-    logger.debug("interpreter: %s", step_interpreter)
-
-    step_command = str(
-        spec_extract_value(step, "command", template_map=None, failemptystr=True)
-    )
-    logger.debug("command: %s", step_command)
-
-    # Arguments to subprocess.run
-    subprocess_args = {
-        "env": state.envs.copy(),
-        "stdout": None,
-        "stderr": subprocess.STDOUT,
-        "shell": step_shell,
-        "text": True,
-    }
-
-    # If we're capturing, stdout should come back via pipe
-    if step_capture != "":
-        subprocess_args["stdout"] = subprocess.PIPE
-
-    # Override interpreter if the type is bash or pwsh
-    if step_type == "pwsh":
-        step_interpreter = "pwsh -noni -c -"
-    elif step_type == "bash":
-        step_interpreter = "bash"
-
-    # If an interpreter is defined, this is the executable to call instead
-    if step_interpreter != "":
-        call_args = step_interpreter
-        subprocess_args["input"] = step_command
-    else:
-        call_args = step_command
-        subprocess_args["stdin"] = subprocess.DEVNULL
-
-    # If shell is not true, then we need to split the string for the call to subprocess.run
-    if not step_shell:
-        call_args = shlex.split(call_args)
-
-    logger.debug("Call arguments: %s", call_args)
-    logger.debug("Subprocess args: %s", subprocess_args)
-
-    sys.stdout.flush()
-    proc = subprocess.run(call_args, check=False, **subprocess_args)
-
-    # Check if the process failed
-    if proc.returncode != 0:
-        # If the subprocess was called with stdout PIPE, output it here
-        if subprocess_args["stdout"] is not None:
-            log_raw(str(proc.stdout))
-
-        raise SpecRunException(
-            f"Process exited with non-zero exit code: {proc.returncode}"
-        )
-
-    if step_capture:
-        # If we're capturing output from the step, put it in the environment now
-        stdout_capture = str(proc.stdout)
-        if step_capture_strip:
-            stdout_capture = stdout_capture.strip()
-
-        state.merge_envs({step_capture: stdout_capture}, all_scopes=True)
-        log_raw(stdout_capture)
-
-
-def process_spec_step(step_name, step, state):
-    # Validate action type
-    assert_type(step, dict, "Step is not a dictionary")
-
-    # Create a new scope state
-    parent_state = state
-    state = ScopeState(parent=parent_state)
-
-    # Merge environment variables in early
-    merge_spec_envs(step, state)
-
-    #
-    # Handle dependencies
-    #
-
-    # Record this step as having been seen
-    state.common.touch_step(step_name)
-
-    # Capture dependencies for this step
-    step_depends_on = validate_str_list(
-        spec_extract_value(step, "depends_on", template_map=state.envs, default=[]),
-        allow_empty_str=False,
-    )
-
-    # Process dependencies
-    # Call step processing for any steps that haven't been completed
-    # Anything that is already pending is an error as there is already a function call handling this and means
-    # there is a circular dependency
-    for dep_name in step_depends_on:
-        dep_state = state.common.get_step_state(dep_name)
-
-        if dep_state == StepState.COMPLETED:
-            continue
-
-        if dep_state == StepState.PENDING:
-            raise SpecRunException(
-                f"Circular reference in step dependencies - Step {dep_name} already visited, but not completed"
-            )
-
-        # Step has not been started, so we'll start processing of this step
-        if dep_name not in state.common.spec["steps"]:
-            raise SpecRunException(f"Reference to step that does not exist: {dep_name}")
-
-        dep_ref = state.common.spec["steps"][dep_name]
-        process_spec_step(dep_name, dep_ref, parent_state)
-
-
-    # Dependencies may have captured a var, so merge parent vars in to a new scope state
-    state = ScopeState(parent=parent_state)
-    merge_spec_envs(step, state)
-
-    #
-    # End dependency handling
-    #
-
-    log_raw("")
-    log_raw(f"**************** STEP {step_name}")
-
-    # Get parameters for this step
-    step_type = str(
-        spec_extract_value(step, "type", template_map=state.envs, failemptystr=True)
-    )
-    logger.debug("type: %s", step_type)
-
-    # Determine which type of step this is and process
-    if step_type in ("command", "pwsh", "bash"):
-        process_spec_step_command(step, state)
-    elif step_type == "semver":
-        process_spec_step_semver(step, state)
-    elif step_type == "github_release":
-        process_spec_step_github_release(step, state)
-    else:
-        raise SpecRunException(f"unknown step type: {step_type}")
-
-    log_raw("")
-    log_raw(f"**************** END STEP {step_name}")
-    log_raw("")
-
-    # Record this step as having been completed
-    state.common.mark_step_complete(step_name)
-
-
-def process_spec_action(action, state):
-    # Create a new scope state
-    state = ScopeState(parent=state)
-
-    # Validate action type
-    assert_type(action, dict, "Action is not a dictionary")
-
-    # Merge environment variables in early
-    merge_spec_envs(action, state)
-
-    # Capture steps for this action
-    action_steps = spec_extract_value(
-        action, "steps", default=[], template_map=state.envs
-    )
-    assert_type(action_steps, list, "action steps is not a list")
-    for item in action_steps:
-        if isinstance(item, (dict, str)):
-            continue
-
-        raise SpecRunException(f"Invalid value in steps list ({str(item)})")
-
-    # Process steps in action
-    for step_ref in action_steps:
-        if isinstance(step_ref, str):
-            if step_ref == "":
-                raise SpecRunException("Empty step reference")
-
-            if step_ref not in state.common.spec["steps"]:
-                raise SpecRunException(
-                    f"Reference to step that does not exist: {step_ref}"
-                )
-
-            step_name = step_ref
-            step_ref = state.common.spec["steps"][step_name]
-        else:
-            step_name = spec_extract_value(
-                step_ref, "name", template_map=None, failemptystr=True
-            )
-
-        # Call the processor for this step
-        process_spec_step(step_name, step_ref, state)
-
-
 def process_spec(spec_file, action_name, action_arg):
 
     # Check for spec file
@@ -607,39 +647,20 @@ def process_spec(spec_file, action_name, action_arg):
     if not isinstance(spec, dict):
         raise SpecLoadException("Parsed specification is not a dictionary")
 
-    # State for processing
-    state = ScopeState()
-    state.common.spec = spec
-
     # Make sure we have a valid action name
-    assert_not_emptystr(action_name, "Invalid or empty action name specified")
+    if not isinstance(action_name, str) or action_name == "":
+        raise SpecRunException("Invalid or empty action name specified")
 
     # Make sure action_arg is a string
     action_arg = str(action_arg) if action_arg is not None else ""
-    state.envs["BDAST_ACTION_ARG"] = action_arg
 
-    # Capture global environment variables from spec and merge
-    merge_spec_envs(state.common.spec, state)
+    # Create bdast spec
+    bdast_spec = BdastSpec(spec)
 
-    # Read in steps
-    steps = spec_extract_value(
-        state.common.spec, "steps", default={}, template_map=None
-    )
-    assert_type(steps, dict, "global steps is not a dictionary")
-
-    # Read in actions
-    actions = spec_extract_value(
-        state.common.spec, "actions", default={}, template_map=None
-    )
-    assert_type(actions, dict, "global actions is not a dictionary")
-
-    # Make sure the action name exists
-    if action_name not in actions:
-        raise SpecRunException(f"Action name does not exist: {action_name}")
-
-    # Process action
+    # Run the action
     log_raw("")
     log_raw(f"**************** ACTION {action_name}")
-    process_spec_action(actions[action_name], state)
+    bdast_spec.run(action_name, action_arg)
     log_raw("**************** END ACTION")
     log_raw("")
+

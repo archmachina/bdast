@@ -1,169 +1,54 @@
 ---
 version: 2alpha
 
-env:
-  REMOTE_ADDRESS: 1.1.1.1
-  DEFAULT_SEMVER: refs/tags/v0.1.0-rc1+test12
-  BAD_SEMVER: x.x.x
-  GLOBAL: 1
+vars:
+  test_address: 1.1.1.1
+  default_semver: refs/tags/v0.1.0-rc1+test12
+  bad_semver: x.x.x
+  global: 1
+  test: "{{ other }}"
+  other: 2
 
 steps:
+  get_hostname:
+    command:
+      cmd: hostname
+      capture: hostname
+      capture_strip: true
+
   dep_test_a:
-    type: bash
-    depends_on:
-      - setup
-    command: echo dep_test_a
+    command:
+      cmd: echo dep_test_a
 
   dep_test_b:
-    type: bash
+    command:
+      cmd: echo dep_test_b
+      capture: CAPTURE
+      capture_strip: true
     depends_on:
       - dep_test_a
-    command: echo dep_test_b
-    capture: CAPTURE
-    capture_strip: true
 
   dep_test_c:
-    type: bash
+    command:
+      cmd: |
+        echo dep_test_c
+        echo "CAPTURE: $CAPTURE"
     depends_on:
       - dep_test_b
       - dep_test_a
-    command: |
-      echo dep_test_c
-      echo "CAPTURE: $CAPTURE"
-
-  semver:
-    type: semver
-    sources:
-      - BAD_SEMVER
-      - DEFAULT
-    required: $semver_required
-    env:
-      semver_required: true
-      DEFAULT: $DEFAULT_SEMVER
-
-  ping_info:
-    type: command
-    shell: true
-    command: echo Remote address to check $REMOTE_ADDRESS
-
-  ping:
-    type: command
-    shell: true
-    command: ping -c 3 $REMOTE_ADDRESS >/dev/null 2>&1 ; echo -n $?
-    capture: PING_OUTPUT
-
-  ping_result:
-    type: command
-    shell: true
-    interpreter: /bin/bash
-    command: |
-      if [ "$PING_OUTPUT" == "0" ] ; then
-        echo "Ping success"
-      else
-        echo "Ping failure"
-      fi
-
-  pwsh_info:
-    type: pwsh
-    command: |
-      $InformationPreference = "Continue"
-      Write-Information "Version Information"
-      $PSVersionTable | Format-Table
-
-      Write-Information $Env:TEST
-      Write-Information $Env:REMOTE_ADDRESS
-    env:
-      TEST: 1
-
-  docker_info:
-    type: bash
-    command: |
-      docker -v
 
 actions:
-  capture_test:
-    steps:
-      - name: capture_info
-        type: bash
-        command: |
-          echo -e "  a\n  "
-        capture: CAPTURE_INFO
-        capture_strip: false
-
-      - name: capture_show
-        type: bash
-        command: |
-          echo "x${CAPTURE_INFO}x"
-
-      - name: capture_info2
-        type: bash
-        command: |
-          echo -e "  a\n  "
-        capture: CAPTURE_INFO
-        capture_strip: true
-
-      - name: capture_show2
-        type: bash
-        command: |
-          echo "x${CAPTURE_INFO}x"
-
-  semver:
-    env:
-      GLOBAL: 2
-    steps:
-      - semver
-      - name: print_semver
-        type: command
-        shell: $SHOULD_SHELL
-        command: |
-          echo $SEMVER_FULL
-          echo $SEMVER_MAJOR
-          echo $SEMVER_MINOR
-          echo $SEMVER_PATCH
-          echo $SEMVER_PRERELEASE
-          echo $SEMVER_BUILDMETA
-          echo $SEMVER_IS_PRERELEASE
-          echo GLOBAL:$GLOBAL
-        env:
-          SHOULD_SHELL: true
-          # GLOBAL: 3
-        env_files:
-          - vars.yaml
-
-  ping_check:
-    steps:
-      - ping_info
-      - ping
-      - ping_result
-
-  change_remote:
-    steps:
-      - name: change_remote
-        type: command
-        capture: REMOTE_ADDRESS
-        command: echo "8.8.8.8"
-
-  bad_ping_check:
-    steps:
-      - ping_info
-      - ping
-      - ping_result
-    env:
-      REMOTE_ADDRESS: 169.254.255.255
-    env_files:
-      - vars.yaml
-
-  build:
-    steps:
-      - pwsh_info
-      - docker_info
-
   dep_test:
     steps:
-      - name: setup
-        type: bash
-        command: echo setup
-      - name: dep_test_a
-        type: bash
-        command: echo override dep_test_a
+      - name: "setup {{ test }}"
+        command:
+          cmd: "echo {{ env.USER }}"
+        depends_on:
+          - get_hostname
+      - name: dep_test_ax
+        command:
+          cmd: echo override dep_test_a
       - dep_test_c
+    vars:
+      test: 1
+
