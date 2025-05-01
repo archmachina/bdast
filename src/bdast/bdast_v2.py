@@ -45,6 +45,108 @@ class ActionState:
         # Recreate the template session
         self.session = obslib.Session(template_vars=obslib.eval_vars(self.vars))
 
+def process_spec_step_github_release(action_state, impl_config):
+
+    # Capture step properties
+    headers = obslib.extract_property(impl_config, "headers", default={}, optional=True)
+    headers = action_state.session.resolve(headers, (list, type(None)))
+    if headers is None:
+        headers = {}
+
+    # Make sure all headers are str -> str
+    temp = {}
+    for key in headers:
+        temp[str(key)] = str(headers[name])
+    headers = temp
+
+    url = obslib.extract_property(impl_config, "url")
+    url = action_state.session.resolve(url, str)
+
+    method = obslib.extract_property(impl_config, "method", default="post", optional=True)
+    method = action_state.session.resolve(method, str)
+
+    body = obslib.extract_property(impl_config, "body", default="", optional=True)
+    body = action_state.session.resolve(body, str)
+
+    response = requests.post(url, timeout=(10, 30), headers=headers, data=payload)
+    response.raise_for_status()
+
+    logger.info("Request successful")
+    logger.debug("Response code: %s", response.status_code)
+    logger.debug("Response text: %s", response.text)
+
+def process_spec_step_semver(action_state, impl_config):
+
+    # Capture step properties
+    required = obslib.extract_property(impl_config, "required", default=False, optional=True)
+    required = action_state.session.resolve(required, bool)
+
+    sources = obslib.extract_property(impl_config, "sources", default=[], optional=True)
+    sources = action_state.session.resolve(sources, (list, type(None)))
+    if sources is None:
+        sources = []
+
+    strip_regex = obslib.extract_property(impl_config, "strip_regex", default=["^refs/tags/", "^v"], optional=True)
+    strip_regex = action_state.session.resolve(strip_regex, (list, type(None)))
+
+    # Regex for identifying and splitting semver strings
+    # Reference: https://semver.org/
+    semver_regex = r"^(?P<major>0|[1-9]\d*)\.(?P<minor>0|[1-9]\d*)\."
+    semver_regex += r"(?P<patch>0|[1-9]\d*)(?:-(?P<prerelease>"
+    semver_regex += r"(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*)"
+    semver_regex += r"(?:\.(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?"
+    semver_regex += r"(?:\+(?P<buildmetadata>[0-9a-zA-Z-]+"
+    semver_regex += r"(?:\.[0-9a-zA-Z-]+)*))?$"
+
+    for source in sources:
+        logger.info("Checking %s", source)
+
+        # Strip any components matching strip_regex
+        for regex_item in strip_regex:
+            source = re.sub(regex_item, "", source)
+
+        logger.debug("Source post-regex strip: %s", source)
+
+        # Check if this source is a semver match
+        result = re.match(semver_regex, source)
+        if result is None:
+            logger.debug("Source (%s) is not a match", source)
+            continue
+
+        logger.info("Semver match on %s", source)
+
+        # Assign semver components to environment vars
+        env_vars = {
+            "SEMVER_ORIG": source,
+            "SEMVER_FULL": "" if result[0] is None else result[0],
+            "SEMVER_MAJOR": "" if result[1] is None else result[1],
+            "SEMVER_MINOR": "" if result[2] is None else result[2],
+            "SEMVER_PATCH": "" if result[3] is None else result[3],
+            "SEMVER_PRERELEASE": "" if result[4] is None else result[4],
+            "SEMVER_BUILDMETA": "" if result[5] is None else result[5],
+        }
+
+        # Determine if this is a prerelease
+        if env_vars["SEMVER_PRERELEASE"] != "":
+            env_vars["SEMVER_IS_PRERELEASE"] = "1"
+            env_vars["SEMVER_IS_PRERELEASE_WORD"] = "true"
+        else:
+            env_vars["SEMVER_IS_PRERELEASE"] = "0"
+            env_vars["SEMVER_IS_PRERELEASE_WORD"] = "false"
+
+        log_raw(f"SEMVER version information: {env_vars}")
+
+        # Merge semver vars in to environment vars
+        state.merge_envs(env_vars, all_scopes=True)
+
+        return
+
+    # No matches found
+    if required:
+        raise SpecRunException("No semver matches found")
+
+    logger.warning("No semver matches found")
+
 def process_step_command(action_state, impl_config, step_type):
 
     # Check incoming parameters
@@ -486,148 +588,6 @@ class BdastSpec:
 def log_raw(msg):
     print(msg, flush=True)
 
-def process_spec_step_github_release(step, state):
-    # Capture step properties
-    owner = str(
-        spec_extract_value(step, "owner", failemptystr=True, template_map=state.envs)
-    )
-    logger.debug("owner: %s", owner)
-
-    repo = str(
-        spec_extract_value(step, "repo", failemptystr=True, template_map=state.envs)
-    )
-    logger.debug("repo: %s", repo)
-
-    token = str(
-        spec_extract_value(step, "token", failemptystr=True, template_map=state.envs)
-    )
-    # logger.debug("token: %s", token)
-    logger.debug("token: ********")
-
-    payload = str(
-        spec_extract_value(step, "payload", failemptystr=True, template_map=state.envs)
-    )
-    logger.debug("payload: %s", payload)
-
-    api_version = str(
-        spec_extract_value(
-            step,
-            "api_version",
-            default="2022-11-28",
-            failemptystr=True,
-            template_map=state.envs,
-        )
-    )
-    logger.debug("api_version: %s", api_version)
-
-    # Construct URL for post
-    url = f"https://api.github.com/repos/{owner}/{repo}/releases"
-    logger.info("Repo URL: %s", url)
-
-    # Headers for post
-    headers = {
-        "Accept": "application/vnd.github.v3+json",
-        "Authorization": f"token {token}",
-        "Content-Type": "application/json",
-        "X-GitHub-Api-Version": api_version,
-    }
-
-    logger.debug("Post url: %s", url)
-    str_headers = str(headers)
-    str_headers = str_headers.replace(token, "********")
-    logger.debug("Post headers: %s", str_headers)
-    logger.debug("Post payload: %s", payload)
-
-    logger.info("Performing post against github")
-    response = requests.post(url, timeout=(10, 30), headers=headers, data=payload)
-    response.raise_for_status()
-
-    logger.info("Request successful")
-    logger.debug("Response code: %s", response.status_code)
-    logger.debug("Response text: %s", response.text)
-
-
-def process_spec_step_semver(step, state):
-    # Capture step properties
-    required = obslib.parse_bool(
-        spec_extract_value(step, "required", default=False, template_map=state.envs)
-    )
-    logger.debug("required: %s", required)
-
-    sources = spec_extract_value(step, "sources", default=[], template_map=state.envs)
-    assert_type(sources, list, "step sources is not a list")
-    logger.debug("sources: %s", sources)
-
-    strip_regex = spec_extract_value(
-        step, "strip_regex", default=["^refs/tags/", "^v"], template_map=state.envs
-    )
-    assert_type(strip_regex, list, "step strip_regex is not a list")
-    logger.debug("strip_regex: %s", strip_regex)
-
-    # Regex for identifying and splitting semver strings
-    # Reference: https://semver.org/
-    semver_regex = r"^(?P<major>0|[1-9]\d*)\.(?P<minor>0|[1-9]\d*)\."
-    semver_regex += r"(?P<patch>0|[1-9]\d*)(?:-(?P<prerelease>"
-    semver_regex += r"(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*)"
-    semver_regex += r"(?:\.(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?"
-    semver_regex += r"(?:\+(?P<buildmetadata>[0-9a-zA-Z-]+"
-    semver_regex += r"(?:\.[0-9a-zA-Z-]+)*))?$"
-
-    for env_name in sources:
-        env_name = str(env_name)
-
-        if env_name not in state.envs:
-            logger.debug("Env var %s not present", env_name)
-            continue
-
-        source = state.envs[env_name]
-        logger.info("Checking %s/%s", env_name, source)
-
-        # Strip any components matching strip_regex
-        for regex_item in strip_regex:
-            source = re.sub(regex_item, "", source)
-
-        logger.debug("Source post-regex strip: %s", source)
-
-        # Check if this source is a semver match
-        result = re.match(semver_regex, source)
-        if result is None:
-            logger.debug("Source (%s) is not a match", source)
-            continue
-
-        logger.info("Semver match on %s", source)
-
-        # Assign semver components to environment vars
-        env_vars = {
-            "SEMVER_ORIG": source,
-            "SEMVER_FULL": "" if result[0] is None else result[0],
-            "SEMVER_MAJOR": "" if result[1] is None else result[1],
-            "SEMVER_MINOR": "" if result[2] is None else result[2],
-            "SEMVER_PATCH": "" if result[3] is None else result[3],
-            "SEMVER_PRERELEASE": "" if result[4] is None else result[4],
-            "SEMVER_BUILDMETA": "" if result[5] is None else result[5],
-        }
-
-        # Determine if this is a prerelease
-        if env_vars["SEMVER_PRERELEASE"] != "":
-            env_vars["SEMVER_IS_PRERELEASE"] = "1"
-            env_vars["SEMVER_IS_PRERELEASE_WORD"] = "true"
-        else:
-            env_vars["SEMVER_IS_PRERELEASE"] = "0"
-            env_vars["SEMVER_IS_PRERELEASE_WORD"] = "false"
-
-        log_raw(f"SEMVER version information: {env_vars}")
-
-        # Merge semver vars in to environment vars
-        state.merge_envs(env_vars, all_scopes=True)
-
-        return
-
-    # No matches found
-    if required:
-        raise SpecRunException("No semver matches found")
-
-    logger.warning("No semver matches found")
 
 def process_spec(spec_file, action_name, action_arg):
 
@@ -660,7 +620,9 @@ def process_spec(spec_file, action_name, action_arg):
     # Run the action
     log_raw("")
     log_raw(f"**************** ACTION {action_name}")
+
     bdast_spec.run(action_name, action_arg)
+
     log_raw("**************** END ACTION")
     log_raw("")
 
