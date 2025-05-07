@@ -10,6 +10,9 @@ vars:
   other: 2
 
 steps:
+  nop_test:
+    nop:
+
   get_hostname:
     command:
       cmd: hostname
@@ -40,6 +43,7 @@ steps:
 actions:
   dep_test:
     steps:
+      - nop_test
       - name: "setup {{ test }}"
         command:
           cmd: "echo {{ env.USER }}"

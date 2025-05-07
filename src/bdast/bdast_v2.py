@@ -61,6 +61,16 @@ class ActionState:
         # Recreate the template session
         self.session = obslib.Session(template_vars=obslib.eval_vars(self.vars))
 
+
+def process_step_nop(action_state, impl_config):
+
+    # Validate incoming parameters
+    val_arg(isinstance(action_state, ActionState), "Invalid action state passed to process_step_nop")
+    val_arg(isinstance(impl_config, dict), "Invalid impl config passed to process_step_nop")
+
+    # Nothing to actually do, since 'nop'
+
+
 def process_spec_step_github_release(action_state, impl_config):
 
     # Capture step properties
@@ -263,95 +273,49 @@ def process_step_command(action_state, impl_config, step_type):
         log_raw(stdout_capture)
 
 
-class BdastStepSemver:
-    def __init__(self, step_def):
-
-        # Check incoming parameters
-        if not isinstance(step_def, dict):
-            raise SpecRunException("Invalid step definition passed to BdastStepSemver")
-
-
-    def run(self, action_state):
-
-        # Check incoming parameters
-        if not isinstance(action_state, ActionState):
-            raise SpecRunException("Invalid ActionState passed to BdastStepSemver run")
-
-
-class BdastStepNop:
-    def __init__(self, step_def):
-
-        # Check incoming parameters
-        if not isinstance(step_def, dict):
-            raise SpecRunException("Invalid step definition passed to BdastStepNop")
-
-    def run(self, action_state):
-
-        # Check incoming parameters
-        if not isinstance(action_state, ActionState):
-            raise SpecRunException("Invalid ActionState passed to BdastStepNop run")
-
 class BdastStep:
     def __init__(self, step_def, session):
 
         # Check incoming parameters
-        if not isinstance(step_def, dict):
-            raise SpecRunException("Spec provided to BdastStep is not a dictionary")
-
-        if not isinstance(session, obslib.Session):
-            raise SpecRunException("Invalid obslib Session passed to BdastStep")
+        val_arg(isinstance(step_def, dict), "Spec provided to BdastStep is not a dictionary")
+        val_arg(isinstance(session, obslib.Session), "Invalid obslib Session passed to BdastStep")
 
         step_def = step_def.copy()
 
         # Extract dependency properties
-        self.depends_on = obslib.extract_property(step_def, "depends_on", default=[], optional=True)
-        self.depends_on = session.resolve(self.depends_on, (list, type(None)))
-        if self.depends_on is None:
-            self.depends_on = []
+        self.depends_on = obslib.extract_property(step_def, "depends_on", optional=True)
+        self.depends_on = session.resolve(self.depends_on, (list, type(None)), default=[])
         self.depends_on = set([obslib.coerce_value(x, str) for x in self.depends_on])
 
-        self.required_by = obslib.extract_property(step_def, "required_by", default=[], optional=True)
-        self.required_by = session.resolve(self.required_by, (list, type(None)))
-        if self.required_by is None:
-            self.required_by = []
+        self.required_by = obslib.extract_property(step_def, "required_by", optional=True)
+        self.required_by = session.resolve(self.required_by, (list, type(None)), default=[])
         self.required_by = set([obslib.coerce_value(x, str) for x in self.required_by])
 
-        self.before = obslib.extract_property(step_def, "before", default=[], optional=True)
-        self.before = session.resolve(self.before, (list, type(None)))
-        if self.before is None:
-            self.before = []
+        self.before = obslib.extract_property(step_def, "before", optional=True)
+        self.before = session.resolve(self.before, (list, type(None)), default=[])
         self.before = set([obslib.coerce_value(x, str) for x in self.before])
 
-        self.after = obslib.extract_property(step_def, "after", default=[], optional=True)
-        self.after = session.resolve(self.after, (list, type(None)))
-        if self.after is None:
-            self.after = []
+        self.after = obslib.extract_property(step_def, "after", optional=True)
+        self.after = session.resolve(self.after, (list, type(None)), default=[])
         self.after = set([obslib.coerce_value(x, str) for x in self.after])
 
         # There should be a single key left on the step, which will
         # be the step type to run.
-        if len(step_def) < 1:
-            raise SpecLoadException("Missing step type on step")
-
-        if len(step_def) > 1:
-            raise SpecLoadException(f"Too many keys remaining on step. Unknown step type. Keys: {step_def.keys()}")
+        val_load(len(step_def) == 1, f"Expected single key for task, found: {step_def.keys()}")
 
         # Extract the step type
         self._step_type = list(step_def.keys())[0]
-        if not isinstance(self._step_type, str) or self._step_type == "":
-            raise SpecLoadException("Empty or non-string step name on step")
+        val_load(isinstance(self._step_type, str), "Step name is not a string")
+        val_load(self._step_type != "", "Empty step name")
 
         # Extract the implementation specific configuration
-        self._impl_config = obslib.extract_property(step_def, self._step_type, default={})
-        self._impl_config = session.resolve(self._impl_config, (dict, type(None)), depth=0)
-        if self._impl_config is None:
-            self._impl_config = {}
+        self._impl_config = obslib.extract_property(step_def, self._step_type)
+        self._impl_config = session.resolve(self._impl_config, (dict, type(None)), depth=0, default={})
 
     def run(self, action_state):
 
         # Check incoming parameters
-        if not isinstance(action_state, ActionState):
-            raise SpecRunException("Invalid ActionState passed to BdastStep run")
+        val_arg(isinstance(action_state, ActionState), "Invalid ActionState passed to BdastStep run")
 
         # Load the specific step type here
         if self._step_type in ("command", "bash", "pwsh"):
@@ -361,12 +325,11 @@ class BdastStep:
         elif self._step_type == "nop":
             process_step_nop(action_state, self._impl_config)
         else:
-            raise SpecRunException(f"unknown step type: {self._step_type}")
+            raise BdastRunException(f"unknown step type: {self._step_type}")
 
         # Make sure the implementation extracted all properties and there are
         # no remaining unknown properties
-        if len(self._impl_config) > 0:
-            raise SpecLoadException(f"Unknown properties in step config: {step_subobj.keys()}")
+        val_load(len(self._impl_config) == 0, f"Unknown properties in step config: {self._impl_config.keys()}")
 
 
 class BdastSpec:
