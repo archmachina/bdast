@@ -8,6 +8,7 @@ import shlex
 import subprocess
 import sys
 import copy
+import glob
 from string import Template
 from enum import Enum
 
@@ -15,9 +16,24 @@ import requests
 import yaml
 import obslib
 
-from .exception import SpecRunException,SpecLoadException
+from .exception import *
 
 logger = logging.getLogger(__name__)
+
+def val_arg(val, message):
+    if not val:
+        raise BdastArgumentException(message)
+
+def val_load(val, message):
+    if not val:
+        raise BdastSpecLoadException(message)
+
+def val_run(val, message):
+    if not val:
+        raise BdastRunException(message)
+
+def log_raw(msg):
+    print(msg, flush=True)
 
 class ActionState:
     def __init__(self, action_vars):
@@ -357,69 +373,112 @@ class BdastSpec:
     def __init__(self, spec):
 
         # Check incoming values
-        if not isinstance(spec, dict):
-            raise SpecRunException("Spec supplied to BdastSpec is not a dictionary")
+        val_arg(isinstance(spec, dict), "Spec supplied to BdastSpec is not a dictionary")
 
         # Reference to the deserialised specification
-        self._spec = copy.deepcopy(spec)
+        # We'll try to make BdastSpec reusable, though it isn't currently reused
+        spec = copy.deepcopy(spec)
 
         # Create a basic obslib session with no vars
-        self._session = obslib.Session(template_vars={})
+        session = obslib.Session(template_vars={})
+
+        # Create a session using the global vars - This is only to allow vars
+        # to be used in the include directive
+        temp_vars = obslib.extract_property(spec, "vars", optional=True, remove=False)
+        temp_vars = session.resolve(temp_vars, (dict, type(None)), depth=0, default={})
+        session = obslib.Session(template_vars=obslib.eval_vars(temp_vars))
+
+        # Get a list of includes for this spec
+        includes = obslib.extract_property(spec, "include", optional=True)
+        includes = session.resolve(includes, (list, type(None)), default=[])
+
+        self._steps = {}
+        self._actions = {}
+        self._vars = {}
+
+        for file_glob in includes:
+            # Make sure we have a string
+            val_load(isinstance(file_glob, str), f"Invalid value in vars_file list. Must be string. Found {type(file_glob)}")
+
+            # Load include spec
+            matches = glob.glob(file_glob, recursive=True)
+            for match in matches:
+                with open(match, "r", encoding="utf-8") as file:
+                    content = yaml.safe_load(file)
+
+            # Merge vars, steps and actions from this spec
+            self._merge_spec(content)
+
+        # Merge our spec last to allow it to override steps, actions and vars
+        self._merge_spec(spec)
+
+
+    def _merge_spec(self, spec):
+
+        # Validate arguments
+        val_arg(isinstance(spec, dict), "Invalid spec passed to _merge_spec")
+
+        # Create a basic obslib session with no vars
+        session = obslib.Session(template_vars={})
+
+        # Retrieve the version from the spec
+        version = obslib.extract_property(spec, "version")
+        version = session.resolve(version, str)
+        val_load(version in ("2", "2beta", "2alpha"), f"Invalid spec version: {version}")
 
         # Read the global vars from the spec file
-        self._vars = obslib.extract_property(self._spec, "vars", default={}, optional=True)
-        self._vars = self._session.resolve(self._vars, (dict, type(None)), depth=0)
-        if self._vars is None:
-            self._vars = {}
+        spec_vars = obslib.extract_property(spec, "vars", optional=True)
+        spec_vars = session.resolve(spec_vars, (dict, type(None)), depth=0, default={})
+        self._vars.update(spec_vars)
 
-        # TODO: Read vars from a file
-
-        # Create a new obslib session with vars read from the spec and files
-        self._session = obslib.Session(template_vars=obslib.eval_vars(self._vars))
+        # Recreate the session based specifically on this specs vars (not
+        # the accumulated vars in self._vars)
+        session = obslib.Session(template_vars=obslib.eval_vars(spec_vars))
 
         # Read the actions from the spec
-        self._actions = obslib.extract_property(self._spec, "actions", default={}, optional=True)
-        self._actions = self._session.resolve(self._actions, (dict, type(None)), depth=1)
-        if self._actions is None:
-            self._actions = {}
+        spec_actions = obslib.extract_property(spec, "actions", optional=True)
+        spec_actions = session.resolve(spec_actions, (dict, type(None)), depth=1, default={})
+        self._actions.update(spec_actions)
 
         # Read the steps from the spec
-        self._steps = obslib.extract_property(self._spec, "steps", default={}, optional=True)
-        self._steps = self._session.resolve(self._steps, (dict, type(None)), depth=1)
-        if self._steps is None:
-            self._steps = {}
+        spec_steps = obslib.extract_property(spec, "steps", optional=True)
+        spec_steps = session.resolve(spec_steps, (dict, type(None)), depth=1, default={})
+        self._steps.update(spec_steps)
+
+        # Make sure there are no other keys on this spec
+        val_load(len(spec.keys()) == 0, f"Invalid keys on loaded spec: {spec.keys()}")
+
 
     def run(self, action_name, action_arg):
 
         # Check incoming values
-        if not isinstance(action_name, str) or action_name == "":
-            raise SpecRunException("Invalid action name passed to SpecAction")
-
-        if not isinstance(action_arg, str):
-            raise SpecRunException("Invalid action arg passed to SpecAction")
+        val_arg(isinstance(action_name, str), "Invalid action name passed to BdastSpec.run")
+        val_arg(action_name != "", "Empty action name passed to BdastSpec.run")
+        val_arg(isinstance(action_arg, str), "Invalid action arg passed to BdastSpec.run")
+        val_arg(action_name in self._actions, f"Action name '{action_name}' does not exist")
 
         # Retrieve the action. Make it a copy so we can check for invalid properties
         # without changing the original
-        if action_name not in self._actions:
-            raise SpecLoadException(f"Action name '{action_name}' does not exist")
-
         action = copy.deepcopy(self._actions[action_name])
 
+        # Create a session based on the accumulated vars
+        session = obslib.Session(template_vars=obslib.eval_vars(self._vars))
+
         # Extract vars from the action to merge in to the working vars
-        action_vars = obslib.extract_property(action, "vars", default={}, optional=True)
-        action_vars = self._session.resolve(action_vars, (dict, type(None)), depth=0)
-        if action_vars is None:
-            action_vars = {}
+        action_vars = obslib.extract_property(action, "vars", optional=True)
+        action_vars = session.resolve(action_vars, (dict, type(None)), depth=0, default={})
+
+        # Recreate the session with the merged in vars
+        temp_vars = self._vars.copy()
+        temp_vars.update(action_vars)
+        session = obslib.Session(template_vars=obslib.eval_vars(temp_vars))
 
         # Extract steps from the action
-        action_steps = obslib.extract_property(action, "steps", default=[], optional=True)
-        action_steps = self._session.resolve(action_steps, (list, type(None)), depth=1)
-        if action_steps is None:
-            action_steps = []
+        action_steps = obslib.extract_property(action, "steps", optional=True)
+        action_steps = session.resolve(action_steps, (list, type(None)), depth=1, default=[])
 
         # Validate that there are no unknown properties for the action
-        if len(action.keys()) > 0:
-            raise SpecLoadException(f"Invalid properties on action: {action.keys()}")
+        val_load(len(action.keys()) == 0, f"Invalid properties on action: {action.keys()}")
 
         ########
         # Here we will check for duplicate step name references (seen_step_names), preserve the
@@ -440,33 +499,29 @@ class BdastSpec:
 
                 # Make sure the step name exists globally
                 # Intentionally check 'self._steps' as we want to avoid check against names defined inline
-                if step_item not in self._steps:
-                    raise SpecLoadException(f"Step '{step_item}' does not exist")
+                val_load(step_item in self._steps, f"Step '{step_item}' does not exist")
 
             elif isinstance(step_item, dict):
 
                 # If it's a dict, then it is an inline definition of a step
                 # Extract (/remove) the name from the step definition
                 step_name = obslib.extract_property(step_item, "name")
-                step_name = self._session.resolve(step_name, str)
+                step_name = session.resolve(step_name, str)
 
                 # Check that this step name isn't a global step. Disallow shadowing of
                 # global steps as this would just be confusing.
-                if step_name in self._steps:
-                    raise SpecLoadException(f"Inline step has identical name to global step: {step_name}")
+                val_load(step_name not in self._steps, f"Inline step has identical name to global step: {step_name}")
 
                 # Store the inline step in the step_library
                 step_library[step_name] = step_item
 
             else:
-                raise SpecLoadException(f"Invalid step defined in action with type {type(step_item)}")
+                raise BdastSpecLoadException(f"Invalid step defined in action with type {type(step_item)}")
 
             # Make sure there are no duplicate step references
             # This is because a step will implicitly depend on the prior when defined in the
             # action steps, so duplicate names will create an unresolvable set of dependencies
-            if step_name in seen_step_names:
-                raise SpecLoadException(f"Duplicate step name reference in action: {step_name}")
-
+            val_load(step_name not in seen_step_names, f"Duplicate step name reference in action: {step_name}")
             seen_step_names.add(step_name)
 
             # Store the name in step_order, so that dependencies can be updated later
@@ -481,15 +536,14 @@ class BdastSpec:
             step_name = step_queue.pop(0)
 
             # Make sure this step has a definition
-            if step_name not in step_library:
-                raise SpecLoadException(f"Reference to non-existant step: {step_name}")
+            val_load(step_name in step_library, f"Reference to non-existant step: {step_name}")
 
             if step_name in active_step_map:
                 # We've already processed this step_name, so skip
                 continue
 
             # Create a BdastStep and save it in the map
-            active_step_map[step_name] = BdastStep(step_library[step_name], self._session)
+            active_step_map[step_name] = BdastStep(step_library[step_name], session)
 
             # Check depends_on and required_by. before and after do not implicitly load
             # a step
@@ -568,7 +622,7 @@ class BdastSpec:
                 for step_name in active_step_map:
                     log_raw(f"{step_name}: {active_step_map[step_name].depends_on}")
 
-                raise SpecRunException(f"Could not resolve step dependencies")
+                raise BdastRunException(f"Could not resolve step dependencies")
 
             # Run the step
             log_raw("")
@@ -585,18 +639,16 @@ class BdastSpec:
             active_step_map.pop(step_match)
 
 
-def log_raw(msg):
-    print(msg, flush=True)
-
-
 def process_spec(spec_file, action_name, action_arg):
 
-    # Check for spec file
-    if spec_file is None or spec_file == "":
-        raise SpecLoadException("Specification filename missing")
+    # Validate arguments
+    val_arg(spec_file is not None and spec_file != "", "Specification filename missing")
+    val_arg(os.path.isfile(spec_file), "Spec file does not exist or is not a file")
 
-    if not os.path.isfile(spec_file):
-        raise SpecLoadException("Spec file does not exist or is not a file")
+    val_arg(isinstance(action_name, str), "Invalid or empty action name specified")
+
+    # Make sure action_arg is a string
+    action_arg = str(action_arg) if action_arg is not None else ""
 
     # Load spec file
     logger.info("Loading spec: %s", spec_file)
@@ -604,15 +656,7 @@ def process_spec(spec_file, action_name, action_arg):
         spec = yaml.safe_load(file)
 
     # Make sure we have a dictionary
-    if not isinstance(spec, dict):
-        raise SpecLoadException("Parsed specification is not a dictionary")
-
-    # Make sure we have a valid action name
-    if not isinstance(action_name, str) or action_name == "":
-        raise SpecRunException("Invalid or empty action name specified")
-
-    # Make sure action_arg is a string
-    action_arg = str(action_arg) if action_arg is not None else ""
+    val_load(isinstance(spec, dict), "Parsed specification is not a dictionary")
 
     # Create bdast spec
     bdast_spec = BdastSpec(spec)
