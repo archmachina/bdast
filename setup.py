@@ -19,7 +19,7 @@ setup_args = {
     "download_url": "https://pypi.org/project/bdast/",
     "entry_points": {"console_scripts": ["bdast = bdast:main"]},
     "package_dir": {"": "src"},
-    "install_requires": ["requests>=2.0.0", "PyYAML>=5.0.0", "obslib>=0.3.1],
+    "install_requires": ["requests>=2.0.0", "PyYAML>=5.0.0", "obslib>=0.4.0],
 }
 
 if __name__ == "__main__":
