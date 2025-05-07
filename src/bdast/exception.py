@@ -19,7 +19,7 @@ class BdastArgumentException(Exception):
     Invalid argument supplied to a bdast function
     """
 
-class BdastSpecLoadException(Exception):
+class BdastLoadException(Exception):
     """
     Error parsing or loading the bdast specification
     """

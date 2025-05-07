@@ -26,7 +26,7 @@ def val_arg(val, message):
 
 def val_load(val, message):
     if not val:
-        raise BdastSpecLoadException(message)
+        raise BdastLoadException(message)
 
 def val_run(val, message):
     if not val:
@@ -479,7 +479,7 @@ class BdastSpec:
                 step_library[step_name] = step_item
 
             else:
-                raise BdastSpecLoadException(f"Invalid step defined in action with type {type(step_item)}")
+                raise BdastLoadException(f"Invalid step defined in action with type {type(step_item)}")
 
             # Make sure there are no duplicate step references
             # This is because a step will implicitly depend on the prior when defined in the
