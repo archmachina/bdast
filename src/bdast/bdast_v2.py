@@ -102,19 +102,23 @@ def process_spec_step_github_release(action_state, impl_config):
     logger.debug("Response code: %s", response.status_code)
     logger.debug("Response text: %s", response.text)
 
-def process_spec_step_semver(action_state, impl_config):
+def process_step_semver(action_state, impl_config):
 
-    # Capture step properties
+    # Check incoming parameters
+    val_arg(isinstance(action_state, ActionState), "Invalid action state passed to process_spec_semver")
+    val_arg(isinstance(impl_config, dict), "Invalid impl config passed to process_spec_semver")
+
+    # Required - whether a result is required
     required = obslib.extract_property(impl_config, "required", on_missing=False)
     required = action_state.session.resolve(required, bool)
 
-    sources = obslib.extract_property(impl_config, "sources", on_missing=[])
-    sources = action_state.session.resolve(sources, (list, type(None)))
-    if sources is None:
-        sources = []
+    # Sources - where to source the semver values
+    sources = obslib.extract_property(impl_config, "sources", on_missing=None)
+    sources = action_state.session.resolve(sources, (list, type(None)), on_none=[])
 
-    strip_regex = obslib.extract_property(impl_config, "strip_regex", on_missing=["^refs/tags/", "^v"])
-    strip_regex = action_state.session.resolve(strip_regex, (list, type(None)))
+    # Strip regex - chars to strip from version sources
+    strip_regex = obslib.extract_property(impl_config, "strip_regex", on_missing=None)
+    strip_regex = action_state.session.resolve(strip_regex, (list, type(None)), on_none=["^refs/tags/", "^v"])
 
     # Regex for identifying and splitting semver strings
     # Reference: https://semver.org/
@@ -186,12 +190,8 @@ def process_step_command(action_state, impl_config, step_type):
     shell = obslib.extract_property(impl_config, "shell", on_missing=False)
     shell = action_state.session.resolve(shell, bool)
 
-    # Interpreter - whether to use a specific interpreter for the command
-    interpreter = obslib.extract_property(impl_config, "interpreter", on_missing="")
-    interpreter = action_state.session.resolve(interpreter, (str, type(None)), on_none="")
-
     # Capture - whether to capture the command output
-    capture = obslib.extract_property(impl_config, "capture", on_missing="")
+    capture = obslib.extract_property(impl_config, "capture", on_missing=None)
     capture = action_state.session.resolve(capture, str)
 
     # Capture_strip - whether to run 'strip' against the output
@@ -199,18 +199,18 @@ def process_step_command(action_state, impl_config, step_type):
     capture_strip = action_state.session.resolve(capture_strip, bool)
 
     # Command line
+    # This is mandatory
     cmd = obslib.extract_property(impl_config, "cmd")
     cmd = action_state.session.resolve(cmd, str)
 
     # Environment variables
-    new_envs = obslib.extract_property(impl_config, "envs", on_missing={})
-    new_envs = action_state.session.resolve(new_envs, (dict, type(None)))
-    if new_envs is None:
-        new_envs = {}
+    new_envs = obslib.extract_property(impl_config, "envs", on_missing=None)
+    new_envs = action_state.session.resolve(new_envs, (dict, type(None)), on_none={})
+    for key in new_envs:
+        new_envs[key] = action_state.session.resolve(new_envs[key], str)
 
     envs = os.environ.copy()
-    for name in new_envs:
-        envs[name] = str(new_envs[name])
+    envs.update(new_envs)
 
     # Arguments to subprocess.run
     subprocess_args = {
@@ -227,16 +227,21 @@ def process_step_command(action_state, impl_config, step_type):
 
     # Override interpreter if the type is bash or pwsh
     if step_type == "command":
-        pass
+
+        # Interpreter - whether to use a specific interpreter for the command
+        # Only extract interpreter key if the type is 'command'
+        interpreter = obslib.extract_property(impl_config, "interpreter", on_missing=None)
+        interpreter = action_state.session.resolve(interpreter, (str, type(None)))
+
     elif step_type == "pwsh":
         interpreter = "pwsh -noni -c -"
     elif step_type == "bash":
         interpreter = "bash"
-    elif step_type != "":
-        raise BdastRunException(f"Unknown cmd type on command: {step_type}")
+    else:
+        raise BdastRunException(f"Unknown cmd type on command: {str(step_type)}")
 
     # If an interpreter is defined, this is the executable to call instead
-    if interpreter != "":
+    if interpreter is not None and interpreter != "":
         call_args = interpreter
         subprocess_args["input"] = cmd
     else:
@@ -262,13 +267,14 @@ def process_step_command(action_state, impl_config, step_type):
 
         raise BdastRunException(f"Process exited with non-zero exit code: {proc.returncode}")
 
-    if capture != "":
-        # If we're capturing output from the step, put it in the environment now
+    # Capture the output, if requested
+    if capture is not None and capture != "":
         stdout_capture = str(proc.stdout)
 
         if capture_strip:
             stdout_capture = stdout_capture.strip()
 
+        # Update the action state vars with the result of the command
         action_state.update_vars({ capture: stdout_capture })
 
         log_raw(stdout_capture)
