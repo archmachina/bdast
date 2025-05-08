@@ -53,6 +53,9 @@ actions:
         command:
           cmd: echo override dep_test_a
       - dep_test_c
+      - name: "Display action name"
+        command:
+          cmd: "echo Action: {{ bdast.action_name }} {{ bdast.action_arg }}"
     vars:
       test: 1
 

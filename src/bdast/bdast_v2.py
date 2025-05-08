@@ -36,27 +36,28 @@ def log_raw(msg):
     print(msg, flush=True)
 
 class ActionState:
-    def __init__(self, action_vars):
+    def __init__(self, action_vars, bdast_vars):
 
         # Check incoming parameters
-        if not isinstance(action_vars, dict):
-            raise BdastRunException("Invalid action_vars passed to ActionState")
+        val_arg(isinstance(action_vars, dict), "Invalid action_vars passed to ActionState")
 
+        self._bdast_vars = bdast_vars
         self.vars = {}
+
         self.update_vars(action_vars)
 
     def update_vars(self, new_vars):
 
         # Check parameters
-        if not isinstance(new_vars, dict):
-            raise BdastRunException("Invalid vars passed to ActionState update_vars")
+        val_arg(isinstance(new_vars, dict), "Invalid vars passed to ActionState update_vars")
 
         # Update vars
         for name in new_vars:
-            self.vars[name] = copy.deepcopy(new_vars[name])
+            self.vars[name] = new_vars[name]
 
-        # Add environment vars
+        # Ensure particular keys are set appropriately
         self.vars["env"] = os.environ.copy()
+        self.vars["bdast"] = self._bdast_vars
 
         # Recreate the template session
         self.session = obslib.Session(template_vars=obslib.eval_vars(self.vars))
@@ -284,20 +285,20 @@ class BdastStep:
 
         # Extract dependency properties
         self.depends_on = obslib.extract_property(step_def, "depends_on", on_missing=None)
-        self.depends_on = session.resolve(self.depends_on, (list, type(None)), on_none=[])
-        self.depends_on = set([obslib.coerce_value(x, str) for x in self.depends_on])
+        self.depends_on = session.resolve(self.depends_on, (list, type(None)), depth=0, on_none=[])
+        self.depends_on = set([session.resolve(x, str) for x in self.depends_on])
 
         self.required_by = obslib.extract_property(step_def, "required_by", on_missing=None)
-        self.required_by = session.resolve(self.required_by, (list, type(None)), on_none=[])
-        self.required_by = set([obslib.coerce_value(x, str) for x in self.required_by])
+        self.required_by = session.resolve(self.required_by, (list, type(None)), depth=0, on_none=[])
+        self.required_by = set([session.resolve(x, str) for x in self.required_by])
 
         self.before = obslib.extract_property(step_def, "before", on_missing=None)
-        self.before = session.resolve(self.before, (list, type(None)), on_none=[])
-        self.before = set([obslib.coerce_value(x, str) for x in self.before])
+        self.before = session.resolve(self.before, (list, type(None)), depth=0, on_none=[])
+        self.before = set([session.resolve(x, str) for x in self.before])
 
         self.after = obslib.extract_property(step_def, "after", on_missing=None)
-        self.after = session.resolve(self.after, (list, type(None)), on_none=[])
-        self.after = set([obslib.coerce_value(x, str) for x in self.after])
+        self.after = session.resolve(self.after, (list, type(None)), depth=0, on_none=[])
+        self.after = set([session.resolve(x, str) for x in self.after])
 
         # There should be a single key left on the step, which will
         # be the step type to run.
@@ -345,22 +346,27 @@ class BdastSpec:
         # Create a basic obslib session with no vars
         session = obslib.Session(template_vars={})
 
-        # Create a session using the global vars - This is only to allow vars
-        # to be used in the include directive
+        # Retrieve the global vars - This is only to allow vars to be used in the include directive
+        # Leave the vars key in place so it can be used later by _merge_spec
         temp_vars = obslib.extract_property(spec, "vars", on_missing=None, remove=False)
         temp_vars = session.resolve(temp_vars, (dict, type(None)), depth=0, on_none={})
+
+        # Recreate session with the global vars
         session = obslib.Session(template_vars=obslib.eval_vars(temp_vars))
 
         # Get a list of includes for this spec
+        # Only resolve the root level object to a list, then individually
+        # resolve each item to a string
         includes = obslib.extract_property(spec, "include", on_missing=None)
-        includes = session.resolve(includes, (list, type(None)), on_none=[])
+        includes = session.resolve(includes, (list, type(None)), depth=0, on_none=[])
+        includes = [session.resolve(x, str) for x in includes]
 
         self._steps = {}
         self._actions = {}
         self._vars = {}
 
         for file_glob in includes:
-            # Make sure we have a string
+            # Make sure we have a string-type include directive
             val_load(isinstance(file_glob, str), f"Invalid value in vars_file list. Must be string. Found {type(file_glob)}")
 
             # Load include spec
@@ -385,6 +391,7 @@ class BdastSpec:
         session = obslib.Session(template_vars={})
 
         # Retrieve the version from the spec
+        # Version is mandatory - no missing or none value replacement
         version = obslib.extract_property(spec, "version")
         version = session.resolve(version, str)
         val_load(version in ("2", "2beta", "2alpha"), f"Invalid spec version: {version}")
@@ -400,12 +407,16 @@ class BdastSpec:
 
         # Read the actions from the spec
         spec_actions = obslib.extract_property(spec, "actions", on_missing=None)
-        spec_actions = session.resolve(spec_actions, (dict, type(None)), depth=1, on_none={})
+        spec_actions = session.resolve(spec_actions, (dict, type(None)), depth=0, on_none={})
+        for key in spec_actions:
+            spec_actions[key] = session.resolve(spec_actions[key], dict, depth=0)
         self._actions.update(spec_actions)
 
         # Read the steps from the spec
         spec_steps = obslib.extract_property(spec, "steps", on_missing=None)
-        spec_steps = session.resolve(spec_steps, (dict, type(None)), depth=1, on_none={})
+        spec_steps = session.resolve(spec_steps, (dict, type(None)), depth=0, on_none={})
+        for key in spec_steps:
+            spec_steps[key] = session.resolve(spec_steps[key], dict, depth=0)
         self._steps.update(spec_steps)
 
         # Make sure there are no other keys on this spec
@@ -417,8 +428,8 @@ class BdastSpec:
         # Check incoming values
         val_arg(isinstance(action_name, str), "Invalid action name passed to BdastSpec.run")
         val_arg(action_name != "", "Empty action name passed to BdastSpec.run")
-        val_arg(isinstance(action_arg, str), "Invalid action arg passed to BdastSpec.run")
         val_arg(action_name in self._actions, f"Action name '{action_name}' does not exist")
+        val_arg(isinstance(action_arg, str), "Invalid action arg passed to BdastSpec.run")
 
         # Retrieve the action. Make it a copy so we can check for invalid properties
         # without changing the original
@@ -437,8 +448,11 @@ class BdastSpec:
         session = obslib.Session(template_vars=obslib.eval_vars(temp_vars))
 
         # Extract steps from the action
+        # Steps in the action can be either a string (referencing another step) or
+        # a dict (inline step definition)
         action_steps = obslib.extract_property(action, "steps", on_missing=None)
-        action_steps = session.resolve(action_steps, (list, type(None)), depth=1, on_none=[])
+        action_steps = session.resolve(action_steps, (list, type(None)), depth=0, on_none=[])
+        action_steps = [session.resolve(x, (dict, str), depth=0) for x in action_steps]
 
         # Validate that there are no unknown properties for the action
         val_load(len(action.keys()) == 0, f"Invalid properties on action: {action.keys()}")
@@ -563,7 +577,11 @@ class BdastSpec:
         ########
         # Process each step
         completed = set()
-        action_state = ActionState(self._vars)
+        bdast_vars = {
+            "action_name": action_name,
+            "action_arg": action_arg
+        }
+        action_state = ActionState(self._vars, bdast_vars)
         while len(active_step_map) > 0:
             # Find a step that can be run
             step_match = None
@@ -607,7 +625,6 @@ def process_spec(spec_file, action_name, action_arg):
     # Validate arguments
     val_arg(spec_file is not None and spec_file != "", "Specification filename missing")
     val_arg(os.path.isfile(spec_file), "Spec file does not exist or is not a file")
-
     val_arg(isinstance(action_name, str), "Invalid or empty action name specified")
 
     # Make sure action_arg is a string
