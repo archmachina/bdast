@@ -375,8 +375,8 @@ class BdastSpec:
                 with open(match, "r", encoding="utf-8") as file:
                     content = yaml.safe_load(file)
 
-            # Merge vars, steps and actions from this spec
-            self._merge_spec(content)
+                # Merge vars, steps and actions from this spec
+                self._merge_spec(content)
 
         # Merge our spec last to allow it to override steps, actions and vars
         self._merge_spec(spec)
@@ -577,11 +577,11 @@ class BdastSpec:
         ########
         # Process each step
         completed = set()
-        bdast_vars = {
+        action_state = ActionState(self._vars, {
             "action_name": action_name,
             "action_arg": action_arg
-        }
-        action_state = ActionState(self._vars, bdast_vars)
+        })
+
         while len(active_step_map) > 0:
             # Find a step that can be run
             step_match = None
@@ -625,7 +625,8 @@ def process_spec(spec_file, action_name, action_arg):
     # Validate arguments
     val_arg(spec_file is not None and spec_file != "", "Specification filename missing")
     val_arg(os.path.isfile(spec_file), "Spec file does not exist or is not a file")
-    val_arg(isinstance(action_name, str), "Invalid or empty action name specified")
+    val_arg(isinstance(action_name, str), "Invalid action name specified")
+    val_arg(action_name != "", "Empty action name specified")
 
     # Make sure action_arg is a string
     action_arg = str(action_arg) if action_arg is not None else ""
