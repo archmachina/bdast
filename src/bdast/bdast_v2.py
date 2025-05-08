@@ -40,7 +40,7 @@ class ActionState:
 
         # Check incoming parameters
         if not isinstance(action_vars, dict):
-            raise SpecRunException("Invalid action_vars passed to ActionState")
+            raise BdastRunException("Invalid action_vars passed to ActionState")
 
         self.vars = {}
         self.update_vars(action_vars)
@@ -49,7 +49,7 @@ class ActionState:
 
         # Check parameters
         if not isinstance(new_vars, dict):
-            raise SpecRunException("Invalid vars passed to ActionState update_vars")
+            raise BdastRunException("Invalid vars passed to ActionState update_vars")
 
         # Update vars
         for name in new_vars:
@@ -74,7 +74,7 @@ def process_step_nop(action_state, impl_config):
 def process_spec_step_github_release(action_state, impl_config):
 
     # Capture step properties
-    headers = obslib.extract_property(impl_config, "headers", default={}, replace_missing=True)
+    headers = obslib.extract_property(impl_config, "headers", on_missing={})
     headers = action_state.session.resolve(headers, (list, type(None)))
     if headers is None:
         headers = {}
@@ -88,10 +88,10 @@ def process_spec_step_github_release(action_state, impl_config):
     url = obslib.extract_property(impl_config, "url")
     url = action_state.session.resolve(url, str)
 
-    method = obslib.extract_property(impl_config, "method", default="post", replace_missing=True)
+    method = obslib.extract_property(impl_config, "method", on_missing="post")
     method = action_state.session.resolve(method, str)
 
-    body = obslib.extract_property(impl_config, "body", default="", replace_missing=True)
+    body = obslib.extract_property(impl_config, "body", on_missing="")
     body = action_state.session.resolve(body, str)
 
     response = requests.post(url, timeout=(10, 30), headers=headers, data=payload)
@@ -104,15 +104,15 @@ def process_spec_step_github_release(action_state, impl_config):
 def process_spec_step_semver(action_state, impl_config):
 
     # Capture step properties
-    required = obslib.extract_property(impl_config, "required", default=False, replace_missing=True)
+    required = obslib.extract_property(impl_config, "required", on_missing=False)
     required = action_state.session.resolve(required, bool)
 
-    sources = obslib.extract_property(impl_config, "sources", default=[], replace_missing=True)
+    sources = obslib.extract_property(impl_config, "sources", on_missing=[])
     sources = action_state.session.resolve(sources, (list, type(None)))
     if sources is None:
         sources = []
 
-    strip_regex = obslib.extract_property(impl_config, "strip_regex", default=["^refs/tags/", "^v"], replace_missing=True)
+    strip_regex = obslib.extract_property(impl_config, "strip_regex", on_missing=["^refs/tags/", "^v"])
     strip_regex = action_state.session.resolve(strip_regex, (list, type(None)))
 
     # Regex for identifying and splitting semver strings
@@ -169,7 +169,7 @@ def process_spec_step_semver(action_state, impl_config):
 
     # No matches found
     if required:
-        raise SpecRunException("No semver matches found")
+        raise BdastRunException("No semver matches found")
 
     logger.warning("No semver matches found")
 
@@ -182,19 +182,19 @@ def process_step_command(action_state, impl_config, step_type):
     val_arg(isinstance(step_type, str), "Invalid step_type passed to process_step_command")
 
     # Shell - Whether to use shell parsing for the command
-    shell = obslib.extract_property(impl_config, "shell", default=False, replace_missing=True)
+    shell = obslib.extract_property(impl_config, "shell", on_missing=False)
     shell = action_state.session.resolve(shell, bool)
 
     # Interpreter - whether to use a specific interpreter for the command
-    interpreter = obslib.extract_property(impl_config, "interpreter", default="", replace_missing=True)
-    interpreter = action_state.session.resolve(interpreter, (str, type(None)), default="")
+    interpreter = obslib.extract_property(impl_config, "interpreter", on_missing="")
+    interpreter = action_state.session.resolve(interpreter, (str, type(None)), on_none="")
 
     # Capture - whether to capture the command output
-    capture = obslib.extract_property(impl_config, "capture", default="", replace_missing=True)
+    capture = obslib.extract_property(impl_config, "capture", on_missing="")
     capture = action_state.session.resolve(capture, str)
 
     # Capture_strip - whether to run 'strip' against the output
-    capture_strip = obslib.extract_property(impl_config, "capture_strip", default=False, replace_missing=True)
+    capture_strip = obslib.extract_property(impl_config, "capture_strip", on_missing=False)
     capture_strip = action_state.session.resolve(capture_strip, bool)
 
     # Command line
@@ -202,7 +202,7 @@ def process_step_command(action_state, impl_config, step_type):
     cmd = action_state.session.resolve(cmd, str)
 
     # Environment variables
-    new_envs = obslib.extract_property(impl_config, "envs", default={}, replace_missing=True)
+    new_envs = obslib.extract_property(impl_config, "envs", on_missing={})
     new_envs = action_state.session.resolve(new_envs, (dict, type(None)))
     if new_envs is None:
         new_envs = {}
@@ -232,7 +232,7 @@ def process_step_command(action_state, impl_config, step_type):
     elif step_type == "bash":
         interpreter = "bash"
     elif step_type != "":
-        raise SpecRunException(f"Unknown cmd type on command: {step_type}")
+        raise BdastRunException(f"Unknown cmd type on command: {step_type}")
 
     # If an interpreter is defined, this is the executable to call instead
     if interpreter != "":
@@ -259,7 +259,7 @@ def process_step_command(action_state, impl_config, step_type):
         if subprocess_args["stdout"] is not None:
             log_raw(str(proc.stdout))
 
-        raise SpecRunException(f"Process exited with non-zero exit code: {proc.returncode}")
+        raise BdastRunException(f"Process exited with non-zero exit code: {proc.returncode}")
 
     if capture != "":
         # If we're capturing output from the step, put it in the environment now
@@ -283,20 +283,20 @@ class BdastStep:
         step_def = step_def.copy()
 
         # Extract dependency properties
-        self.depends_on = obslib.extract_property(step_def, "depends_on", replace_missing=True)
-        self.depends_on = session.resolve(self.depends_on, (list, type(None)), default=[])
+        self.depends_on = obslib.extract_property(step_def, "depends_on", on_missing=None)
+        self.depends_on = session.resolve(self.depends_on, (list, type(None)), on_none=[])
         self.depends_on = set([obslib.coerce_value(x, str) for x in self.depends_on])
 
-        self.required_by = obslib.extract_property(step_def, "required_by", replace_missing=True)
-        self.required_by = session.resolve(self.required_by, (list, type(None)), default=[])
+        self.required_by = obslib.extract_property(step_def, "required_by", on_missing=None)
+        self.required_by = session.resolve(self.required_by, (list, type(None)), on_none=[])
         self.required_by = set([obslib.coerce_value(x, str) for x in self.required_by])
 
-        self.before = obslib.extract_property(step_def, "before", replace_missing=True)
-        self.before = session.resolve(self.before, (list, type(None)), default=[])
+        self.before = obslib.extract_property(step_def, "before", on_missing=None)
+        self.before = session.resolve(self.before, (list, type(None)), on_none=[])
         self.before = set([obslib.coerce_value(x, str) for x in self.before])
 
-        self.after = obslib.extract_property(step_def, "after", replace_missing=True)
-        self.after = session.resolve(self.after, (list, type(None)), default=[])
+        self.after = obslib.extract_property(step_def, "after", on_missing=None)
+        self.after = session.resolve(self.after, (list, type(None)), on_none=[])
         self.after = set([obslib.coerce_value(x, str) for x in self.after])
 
         # There should be a single key left on the step, which will
@@ -310,7 +310,7 @@ class BdastStep:
 
         # Extract the implementation specific configuration
         self._impl_config = obslib.extract_property(step_def, self._step_type)
-        self._impl_config = session.resolve(self._impl_config, (dict, type(None)), depth=0, default={})
+        self._impl_config = session.resolve(self._impl_config, (dict, type(None)), depth=0, on_none={})
 
     def run(self, action_state):
 
@@ -347,13 +347,13 @@ class BdastSpec:
 
         # Create a session using the global vars - This is only to allow vars
         # to be used in the include directive
-        temp_vars = obslib.extract_property(spec, "vars", replace_missing=True, remove=False)
-        temp_vars = session.resolve(temp_vars, (dict, type(None)), depth=0, default={})
+        temp_vars = obslib.extract_property(spec, "vars", on_missing=None, remove=False)
+        temp_vars = session.resolve(temp_vars, (dict, type(None)), depth=0, on_none={})
         session = obslib.Session(template_vars=obslib.eval_vars(temp_vars))
 
         # Get a list of includes for this spec
-        includes = obslib.extract_property(spec, "include", replace_missing=True)
-        includes = session.resolve(includes, (list, type(None)), default=[])
+        includes = obslib.extract_property(spec, "include", on_missing=None)
+        includes = session.resolve(includes, (list, type(None)), on_none=[])
 
         self._steps = {}
         self._actions = {}
@@ -390,8 +390,8 @@ class BdastSpec:
         val_load(version in ("2", "2beta", "2alpha"), f"Invalid spec version: {version}")
 
         # Read the global vars from the spec file
-        spec_vars = obslib.extract_property(spec, "vars", replace_missing=True)
-        spec_vars = session.resolve(spec_vars, (dict, type(None)), depth=0, default={})
+        spec_vars = obslib.extract_property(spec, "vars", on_missing=None)
+        spec_vars = session.resolve(spec_vars, (dict, type(None)), depth=0, on_none={})
         self._vars.update(spec_vars)
 
         # Recreate the session based specifically on this specs vars (not
@@ -399,13 +399,13 @@ class BdastSpec:
         session = obslib.Session(template_vars=obslib.eval_vars(spec_vars))
 
         # Read the actions from the spec
-        spec_actions = obslib.extract_property(spec, "actions", replace_missing=True)
-        spec_actions = session.resolve(spec_actions, (dict, type(None)), depth=1, default={})
+        spec_actions = obslib.extract_property(spec, "actions", on_missing=None)
+        spec_actions = session.resolve(spec_actions, (dict, type(None)), depth=1, on_none={})
         self._actions.update(spec_actions)
 
         # Read the steps from the spec
-        spec_steps = obslib.extract_property(spec, "steps", replace_missing=True)
-        spec_steps = session.resolve(spec_steps, (dict, type(None)), depth=1, default={})
+        spec_steps = obslib.extract_property(spec, "steps", on_missing=None)
+        spec_steps = session.resolve(spec_steps, (dict, type(None)), depth=1, on_none={})
         self._steps.update(spec_steps)
 
         # Make sure there are no other keys on this spec
@@ -428,8 +428,8 @@ class BdastSpec:
         session = obslib.Session(template_vars=obslib.eval_vars(self._vars))
 
         # Extract vars from the action to merge in to the working vars
-        action_vars = obslib.extract_property(action, "vars", replace_missing=True)
-        action_vars = session.resolve(action_vars, (dict, type(None)), depth=0, default={})
+        action_vars = obslib.extract_property(action, "vars", on_missing=None)
+        action_vars = session.resolve(action_vars, (dict, type(None)), depth=0, on_none={})
 
         # Recreate the session with the merged in vars
         temp_vars = self._vars.copy()
@@ -437,8 +437,8 @@ class BdastSpec:
         session = obslib.Session(template_vars=obslib.eval_vars(temp_vars))
 
         # Extract steps from the action
-        action_steps = obslib.extract_property(action, "steps", replace_missing=True)
-        action_steps = session.resolve(action_steps, (list, type(None)), depth=1, default=[])
+        action_steps = obslib.extract_property(action, "steps", on_missing=None)
+        action_steps = session.resolve(action_steps, (list, type(None)), depth=1, on_none=[])
 
         # Validate that there are no unknown properties for the action
         val_load(len(action.keys()) == 0, f"Invalid properties on action: {action.keys()}")
