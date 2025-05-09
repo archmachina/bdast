@@ -72,35 +72,61 @@ def process_step_nop(action_state, impl_config):
     # Nothing to actually do, since 'nop'
 
 
-def process_spec_step_github_release(action_state, impl_config):
+def process_step_url(action_state, impl_config):
 
-    # Capture step properties
-    headers = obslib.extract_property(impl_config, "headers", on_missing={})
-    headers = action_state.session.resolve(headers, (list, type(None)))
-    if headers is None:
-        headers = {}
-
-    # Make sure all headers are str -> str
-    temp = {}
+    # Headers - headers for the request
+    headers = obslib.extract_property(impl_config, "headers", on_missing=None)
+    headers = action_state.session.resolve(headers, (list, type(None)), on_none={})
     for key in headers:
-        temp[str(key)] = str(headers[name])
-    headers = temp
+        headers[key] = action_state.session.resolve(headers[key], str)
 
+    # Url - endpoint to communicate with
     url = obslib.extract_property(impl_config, "url")
     url = action_state.session.resolve(url, str)
 
+    # Method - request method (get, post, etc.)
     method = obslib.extract_property(impl_config, "method", on_missing="post")
     method = action_state.session.resolve(method, str)
 
-    body = obslib.extract_property(impl_config, "body", on_missing="")
-    body = action_state.session.resolve(body, str)
+    # Body - content to send with the request
+    body = obslib.extract_property(impl_config, "body", on_missing=None)
+    body = action_state.session.resolve(body, (str, type(None)))
 
-    response = requests.post(url, timeout=(10, 30), headers=headers, data=payload)
+    # Store - variable to store the result
+    store = obslib.extract_property(impl_config, "store", on_missing=None)
+    store = action_state.session.resolve(store, (str, type(None)))
+
+    # Perform request
+    args = {
+        "method": method,
+        "url": url,
+        "timeout": (10, 30),
+        "headers": headers,
+    }
+
+    if body is not None:
+        args["body"] = body
+
+    response = requests.request(**args)
     response.raise_for_status()
 
     logger.info("Request successful")
     logger.debug("Response code: %s", response.status_code)
     logger.debug("Response text: %s", response.text)
+
+    # Only store result if requested
+    if store is not None and store != "":
+        # What we should provide back to the caller
+        result = {
+            "text": response.text,
+            "headers": response.headers,
+            "status_code": response.status_code
+        }
+
+        # Update vars with the request result
+        action_state.update_vars({
+            store: result
+        })
 
 def process_step_semver(action_state, impl_config):
 
@@ -333,6 +359,8 @@ class BdastStep:
             process_step_command(action_state, self._impl_config, self._step_type)
         elif self._step_type == "semver":
             process_step_semver(action_state, self._impl_config)
+        elif self._step_type == "url":
+            process_step_url(action_state, self._impl_config)
         elif self._step_type == "nop":
             process_step_nop(action_state, self._impl_config)
         else:

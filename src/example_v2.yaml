@@ -50,9 +50,21 @@ actions:
             - "v0.1.2"
           required: true
           store: semver
+
       - name: print semver
         command:
           cmd: "echo {{ semver }}"
+
+      - name: Get website
+        url:
+          url: https://www.google.com.au
+          method: GET
+          store: web_request
+
+      - name: Response code
+        command:
+          cmd: "echo Website response {{ web_request.status_code }}"
+
       - nop_test
       - name: "setup {{ test }}"
         command:
