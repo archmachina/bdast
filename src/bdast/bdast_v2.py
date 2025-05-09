@@ -336,6 +336,14 @@ class BdastStep:
         self.after = session.resolve(self.after, (list, type(None)), depth=0, on_none=[])
         self.after = set([session.resolve(x, str) for x in self.after])
 
+        # Extract when
+        self.when = obslib.extract_property(step_def, "when", on_missing=None)
+        self.when = session.resolve(self.when, (list, str, type(None)), depth=0, on_none=[])
+        if isinstance(self.when, str):
+            self.when = [self.when]
+
+        self.when = [session.resolve(x, str) for x in self.when]
+
         # There should be a single key left on the step, which will
         # be the step type to run.
         val_load(len(step_def) == 1, f"Expected single key for task, found: {step_def.keys()}")
@@ -353,6 +361,13 @@ class BdastStep:
 
         # Check incoming parameters
         val_arg(isinstance(action_state, ActionState), "Invalid ActionState passed to BdastStep run")
+
+        # Check whether to run this step
+        for condition in self.when:
+            result = action_state.session.resolve("{{" + condition + "}}", bool)
+            if not result:
+                logger.info("Skipping step due to conditional")
+                return
 
         # Load the specific step type here
         if self._step_type in ("command", "bash", "pwsh"):
