@@ -41,20 +41,23 @@ steps:
       - dep_test_a
 
 actions:
-  dep_test:
+  semver:
     steps:
       - name: semver_test
         semver:
           sources:
             - "xxxx"
-            - "v0.1.2"
-          required: true
+            # - "v0.1.2"
+          required: false
           store: semver
 
       - name: print semver
         command:
           cmd: "echo {{ semver }}"
+        when: "semver|default('') != ''"
 
+  website:
+    steps:
       - name: Get website
         url:
           url: https://www.google.com.au
@@ -65,6 +68,8 @@ actions:
         command:
           cmd: "echo Website response {{ web_request.status_code }}"
 
+  dep_test:
+    steps:
       - nop_test
       - name: "setup {{ test }}"
         command:
