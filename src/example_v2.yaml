@@ -43,6 +43,16 @@ steps:
 actions:
   dep_test:
     steps:
+      - name: semver_test
+        semver:
+          sources:
+            - "xxxx"
+            - "v0.1.2"
+          required: true
+          store: semver
+      - name: print semver
+        command:
+          cmd: "echo {{ semver }}"
       - nop_test
       - name: "setup {{ test }}"
         command:

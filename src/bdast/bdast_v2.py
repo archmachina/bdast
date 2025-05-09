@@ -42,7 +42,7 @@ class ActionState:
         val_arg(isinstance(action_vars, dict), "Invalid action_vars passed to ActionState")
 
         self._bdast_vars = bdast_vars
-        self.vars = {}
+        self._vars = {}
 
         self.update_vars(action_vars)
 
@@ -53,14 +53,14 @@ class ActionState:
 
         # Update vars
         for name in new_vars:
-            self.vars[name] = new_vars[name]
+            self._vars[name] = new_vars[name]
 
         # Ensure particular keys are set appropriately
-        self.vars["env"] = os.environ.copy()
-        self.vars["bdast"] = self._bdast_vars
+        self._vars["env"] = os.environ.copy()
+        self._vars["bdast"] = self._bdast_vars
 
         # Recreate the template session
-        self.session = obslib.Session(template_vars=obslib.eval_vars(self.vars))
+        self.session = obslib.Session(template_vars=obslib.eval_vars(self._vars))
 
 
 def process_step_nop(action_state, impl_config):
@@ -112,13 +112,22 @@ def process_step_semver(action_state, impl_config):
     required = obslib.extract_property(impl_config, "required", on_missing=False)
     required = action_state.session.resolve(required, bool)
 
+    # store - target variable for storing the semver information
+    store = obslib.extract_property(impl_config, "store")
+    store = action_state.session.resolve(store, str)
+
+    if store == "":
+        raise BdasrRunException("store must have a value")
+
     # Sources - where to source the semver values
     sources = obslib.extract_property(impl_config, "sources", on_missing=None)
-    sources = action_state.session.resolve(sources, (list, type(None)), on_none=[])
+    sources = action_state.session.resolve(sources, (list, type(None)), depth=0, on_none=[])
+    sources = [action_state.session.resolve(x, str) for x in sources]
 
     # Strip regex - chars to strip from version sources
-    strip_regex = obslib.extract_property(impl_config, "strip_regex", on_missing=None)
-    strip_regex = action_state.session.resolve(strip_regex, (list, type(None)), on_none=["^refs/tags/", "^v"])
+    strip_regex = obslib.extract_property(impl_config, "strip_regex", on_missing=["^refs/tags/", "^v"])
+    strip_regex = action_state.session.resolve(strip_regex, (list, type(None)), depth=0, on_none=[])
+    strip_regex = [action_state.session.resolve(x, str) for x in strip_regex]
 
     # Regex for identifying and splitting semver strings
     # Reference: https://semver.org/
@@ -147,28 +156,23 @@ def process_step_semver(action_state, impl_config):
         logger.info("Semver match on %s", source)
 
         # Assign semver components to environment vars
-        env_vars = {
-            "SEMVER_ORIG": source,
-            "SEMVER_FULL": "" if result[0] is None else result[0],
-            "SEMVER_MAJOR": "" if result[1] is None else result[1],
-            "SEMVER_MINOR": "" if result[2] is None else result[2],
-            "SEMVER_PATCH": "" if result[3] is None else result[3],
-            "SEMVER_PRERELEASE": "" if result[4] is None else result[4],
-            "SEMVER_BUILDMETA": "" if result[5] is None else result[5],
+        result = {
+            "orig": source,
+            "full": "" if result[0] is None else result[0],
+            "major": "" if result[1] is None else result[1],
+            "minor": "" if result[2] is None else result[2],
+            "patch": "" if result[3] is None else result[3],
+            "prerelease": "" if result[4] is None else result[4],
+            "buildmeta": "" if result[5] is None else result[5],
+            "is_prerelease": False if result[4] is None else True,
         }
 
-        # Determine if this is a prerelease
-        if env_vars["SEMVER_PRERELEASE"] != "":
-            env_vars["SEMVER_IS_PRERELEASE"] = "1"
-            env_vars["SEMVER_IS_PRERELEASE_WORD"] = "true"
-        else:
-            env_vars["SEMVER_IS_PRERELEASE"] = "0"
-            env_vars["SEMVER_IS_PRERELEASE_WORD"] = "false"
-
-        log_raw(f"SEMVER version information: {env_vars}")
+        log_raw(f"SEMVER version information: {result}")
 
         # Merge semver vars in to environment vars
-        state.merge_envs(env_vars, all_scopes=True)
+        action_state.update_vars({
+            store: result
+        })
 
         return
 
@@ -192,7 +196,7 @@ def process_step_command(action_state, impl_config, step_type):
 
     # Capture - whether to capture the command output
     capture = obslib.extract_property(impl_config, "capture", on_missing=None)
-    capture = action_state.session.resolve(capture, str)
+    capture = action_state.session.resolve(capture, (str, type(None)))
 
     # Capture_strip - whether to run 'strip' against the output
     capture_strip = obslib.extract_property(impl_config, "capture_strip", on_missing=False)
@@ -222,7 +226,7 @@ def process_step_command(action_state, impl_config, step_type):
     }
 
     # If we're capturing, stdout should come back via pipe
-    if capture != "":
+    if capture is not None and capture != "":
         subprocess_args["stdout"] = subprocess.PIPE
 
     # Override interpreter if the type is bash or pwsh
