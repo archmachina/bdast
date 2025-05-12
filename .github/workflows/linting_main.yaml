@@ -1,6 +1,6 @@
 ---
 
-name: main-linting
+name: linting_main
 on:
   workflow_dispatch:
   push:
@@ -8,17 +8,23 @@ on:
       - main
 
 jobs:
-  linting:
-    name: "linting"
+  linting_main:
+    name: "linting_main"
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          submodules: true
+          submodules: false
 
-      - name: linting
+      - name: python setup
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+          cache: 'pip'
+
+      - name: linting_main
         uses: github/super-linter@v7
         env:
           VALIDATE_ALL_CODEBASE: true
