@@ -101,7 +101,6 @@ def process_step_url(action_state, impl_config):
             store: result
         })
 
-
 def process_step_semver(action_state, impl_config):
 
     # Check incoming parameters
@@ -284,6 +283,32 @@ def process_step_command(action_state, impl_config, step_type):
         log_raw(stdout_capture)
 
 
+def process_step_block(action_state, impl_config):
+
+    # Check incoming parameters
+    val_arg(isinstance(action_state, ActionState), "Invalid ActionState passed to process_step_command")
+    val_arg(isinstance(impl_config, dict), "Invalid impl config passed to process_step_command")
+
+    # Extract steps to execute
+    steps = obslib.extract_property(impl_config, "steps", on_missing=None)
+    steps = action_state.session.resolve(steps, (list, type(None)), depth=0, on_none=[])
+    steps = [action_state.session.resolve(x, dict, depth=0) for x in steps]
+
+    # For each of the steps, create a BdastStep
+    # Dependencies aren't supported on these steps
+    steps = [BdastStep(x, action_state.session, support_deps=False) for x in steps]
+    for item in steps:
+        # Extract the step name (required)
+        step_name = obslib.extract_property(item, "name")
+        step_name = action_state.session.resolve(step_name, str)
+
+        # Create a BdastStep
+        step_obj = BdastStep(step_name, item, support_deps=False)
+
+        # Execute the step
+        step_obj.run(action_state)
+
+
 class ActionState:
     def __init__(self, action_vars, bdast_vars):
 
@@ -312,56 +337,36 @@ class ActionState:
         self.session = obslib.Session(template_vars=obslib.eval_vars(self._vars))
 
 
-def process_step(action_state, step_type, impl_config):
-
-    # Validate incoming parameters
-    val_arg(isinstance(action_state, ActionState), "Invalid ActionState passed to process_step")
-    val_arg(isinstance(step_type, str), "Invalid step type passed to process_step")
-    val_arg(step_type != "", "Empty step type passed to process_step")
-    val_arg(isinstance(impl_config, dict), "Invalid impl config passed to process_step")
-
-    # Load the specific step type here
-    if step_type in ("command", "bash", "pwsh"):
-        process_step_command(action_state, impl_config, step_type)
-    elif step_type == "semver":
-        process_step_semver(action_state, impl_config)
-    elif step_type == "url":
-        process_step_url(action_state, impl_config)
-    elif step_type == "nop":
-        process_step_nop(action_state, impl_config)
-    else:
-        raise BdastRunException(f"unknown step type: {step_type}")
-
-    # Make sure the implementation extracted all properties and there are
-    # no remaining unknown properties
-    val_run(len(impl_config) == 0, f"Unknown properties in step config: {impl_config.keys()}")
-
-
 class BdastStep:
-    def __init__(self, step_def, session):
+    def __init__(self, step_name, step_def, session, support_deps=True):
 
         # Check incoming parameters
         val_arg(isinstance(step_def, dict), "Spec provided to BdastStep is not a dictionary")
         val_arg(isinstance(session, obslib.Session), "Invalid obslib Session passed to BdastStep")
+        val_arg(isinstance(step_name, str), "Invalid step name passed to BdastStep")
+        val_arg(step_name != "", "Empty step name passed to BdastStep")
 
+        # Make a copy of the definition and save the name
         step_def = step_def.copy()
+        self._step_name = step_name
 
-        # Extract dependency properties
-        self.depends_on = obslib.extract_property(step_def, "depends_on", on_missing=None)
-        self.depends_on = session.resolve(self.depends_on, (list, type(None)), depth=0, on_none=[])
-        self.depends_on = set([session.resolve(x, str) for x in self.depends_on])
+        if support_deps:
+            # Extract dependency properties
+            self.depends_on = obslib.extract_property(step_def, "depends_on", on_missing=None)
+            self.depends_on = session.resolve(self.depends_on, (list, type(None)), depth=0, on_none=[])
+            self.depends_on = set([session.resolve(x, str) for x in self.depends_on])
 
-        self.required_by = obslib.extract_property(step_def, "required_by", on_missing=None)
-        self.required_by = session.resolve(self.required_by, (list, type(None)), depth=0, on_none=[])
-        self.required_by = set([session.resolve(x, str) for x in self.required_by])
+            self.required_by = obslib.extract_property(step_def, "required_by", on_missing=None)
+            self.required_by = session.resolve(self.required_by, (list, type(None)), depth=0, on_none=[])
+            self.required_by = set([session.resolve(x, str) for x in self.required_by])
 
-        self.before = obslib.extract_property(step_def, "before", on_missing=None)
-        self.before = session.resolve(self.before, (list, type(None)), depth=0, on_none=[])
-        self.before = set([session.resolve(x, str) for x in self.before])
+            self.before = obslib.extract_property(step_def, "before", on_missing=None)
+            self.before = session.resolve(self.before, (list, type(None)), depth=0, on_none=[])
+            self.before = set([session.resolve(x, str) for x in self.before])
 
-        self.after = obslib.extract_property(step_def, "after", on_missing=None)
-        self.after = session.resolve(self.after, (list, type(None)), depth=0, on_none=[])
-        self.after = set([session.resolve(x, str) for x in self.after])
+            self.after = obslib.extract_property(step_def, "after", on_missing=None)
+            self.after = session.resolve(self.after, (list, type(None)), depth=0, on_none=[])
+            self.after = set([session.resolve(x, str) for x in self.after])
 
         # Extract when
         self.when = obslib.extract_property(step_def, "when", on_missing=None)
@@ -389,6 +394,9 @@ class BdastStep:
         # Check incoming parameters
         val_arg(isinstance(action_state, ActionState), "Invalid ActionState passed to BdastStep run")
 
+        log_raw("")
+        log_raw(f"**************** STEP {self._step_name}")
+
         # Check whether to run this step
         for condition in self.when:
             result = action_state.session.resolve("{{" + condition + "}}", bool)
@@ -396,9 +404,27 @@ class BdastStep:
                 logger.info("Skipping step due to conditional")
                 return
 
-        # Call process step to check the type and run the actual step
-        process_step(action_state, self._step_type, self._impl_config)
+        # Load the specific step type here
+        if self._step_type in ("command", "bash", "pwsh"):
+            process_step_command(action_state, self._impl_config, self._step_type)
+        elif self._step_type == "semver":
+            process_step_semver(action_state, self._impl_config)
+        elif self._step_type == "url":
+            process_step_url(action_state, self._impl_config)
+        elif self._step_type == "nop":
+            process_step_nop(action_state, self._impl_config)
+        elif self._step_type == "block":
+            process_step_block(action_state, self._impl_config)
+        else:
+            raise BdastRunException(f"unknown step type: {self._step_type}")
 
+        # Make sure the implementation extracted all properties and there are
+        # no remaining unknown properties
+        val_run(len(self._impl_config) == 0, f"Unknown properties in step config: {self._impl_config.keys()}")
+
+        log_raw("")
+        log_raw(f"**************** END STEP {self._step_name}")
+        log_raw("")
 
 class BdastAction:
     def __init__(self, action_name, action_spec, global_vars, steps):
@@ -513,7 +539,7 @@ class BdastAction:
                 continue
 
             # Create a BdastStep and save it in the map
-            active_step_map[step_name] = BdastStep(step_library[step_name], session)
+            active_step_map[step_name] = BdastStep(step_name, step_library[step_name], session)
 
             # Check depends_on and required_by. before and after do not implicitly load
             # a step
@@ -599,14 +625,7 @@ class BdastAction:
                 raise BdastRunException(f"Could not resolve step dependencies")
 
             # Run the step
-            log_raw("")
-            log_raw(f"**************** STEP {step_match}")
-
             active_step_map[step_match].run(action_state)
-
-            log_raw("")
-            log_raw(f"**************** END STEP {step_match}")
-            log_raw("")
 
             # Record the step as completed
             completed.add(step_match)
