@@ -101,6 +101,7 @@ def process_step_url(action_state, impl_config):
             store: result
         })
 
+
 def process_step_semver(action_state, impl_config):
 
     # Check incoming parameters
@@ -311,6 +312,31 @@ class ActionState:
         self.session = obslib.Session(template_vars=obslib.eval_vars(self._vars))
 
 
+def process_step(action_state, step_type, impl_config):
+
+    # Validate incoming parameters
+    val_arg(isinstance(action_state, ActionState), "Invalid ActionState passed to process_step")
+    val_arg(isinstance(step_type, str), "Invalid step type passed to process_step")
+    val_arg(step_type != "", "Empty step type passed to process_step")
+    val_arg(isinstance(impl_config, dict), "Invalid impl config passed to process_step")
+
+    # Load the specific step type here
+    if step_type in ("command", "bash", "pwsh"):
+        process_step_command(action_state, impl_config, step_type)
+    elif step_type == "semver":
+        process_step_semver(action_state, impl_config)
+    elif step_type == "url":
+        process_step_url(action_state, impl_config)
+    elif step_type == "nop":
+        process_step_nop(action_state, impl_config)
+    else:
+        raise BdastRunException(f"unknown step type: {step_type}")
+
+    # Make sure the implementation extracted all properties and there are
+    # no remaining unknown properties
+    val_run(len(impl_config) == 0, f"Unknown properties in step config: {impl_config.keys()}")
+
+
 class BdastStep:
     def __init__(self, step_def, session):
 
@@ -370,21 +396,8 @@ class BdastStep:
                 logger.info("Skipping step due to conditional")
                 return
 
-        # Load the specific step type here
-        if self._step_type in ("command", "bash", "pwsh"):
-            process_step_command(action_state, self._impl_config, self._step_type)
-        elif self._step_type == "semver":
-            process_step_semver(action_state, self._impl_config)
-        elif self._step_type == "url":
-            process_step_url(action_state, self._impl_config)
-        elif self._step_type == "nop":
-            process_step_nop(action_state, self._impl_config)
-        else:
-            raise BdastRunException(f"unknown step type: {self._step_type}")
-
-        # Make sure the implementation extracted all properties and there are
-        # no remaining unknown properties
-        val_run(len(self._impl_config) == 0, f"Unknown properties in step config: {self._impl_config.keys()}")
+        # Call process step to check the type and run the actual step
+        process_step(action_state, self._step_type, self._impl_config)
 
 
 class BdastAction:
