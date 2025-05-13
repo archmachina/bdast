@@ -35,33 +35,6 @@ def val_run(val, message):
 def log_raw(msg):
     print(msg, flush=True)
 
-class ActionState:
-    def __init__(self, action_vars, bdast_vars):
-
-        # Check incoming parameters
-        val_arg(isinstance(action_vars, dict), "Invalid action_vars passed to ActionState")
-
-        self._bdast_vars = bdast_vars
-        self._vars = {}
-
-        self.update_vars(action_vars)
-
-    def update_vars(self, new_vars):
-
-        # Check parameters
-        val_arg(isinstance(new_vars, dict), "Invalid vars passed to ActionState update_vars")
-
-        # Update vars
-        for name in new_vars:
-            self._vars[name] = new_vars[name]
-
-        # Ensure particular keys are set appropriately
-        self._vars["env"] = os.environ.copy()
-        self._vars["bdast"] = self._bdast_vars
-
-        # Recreate the template session
-        self.session = obslib.Session(template_vars=obslib.eval_vars(self._vars))
-
 
 def process_step_nop(action_state, impl_config):
 
@@ -308,6 +281,34 @@ def process_step_command(action_state, impl_config, step_type):
         action_state.update_vars({ capture: stdout_capture })
 
         log_raw(stdout_capture)
+
+
+class ActionState:
+    def __init__(self, action_vars, bdast_vars):
+
+        # Check incoming parameters
+        val_arg(isinstance(action_vars, dict), "Invalid action_vars passed to ActionState")
+
+        self._bdast_vars = bdast_vars
+        self._vars = {}
+
+        self.update_vars(action_vars)
+
+    def update_vars(self, new_vars):
+
+        # Check parameters
+        val_arg(isinstance(new_vars, dict), "Invalid vars passed to ActionState update_vars")
+
+        # Update vars
+        for name in new_vars:
+            self._vars[name] = new_vars[name]
+
+        # Ensure particular keys are set appropriately
+        self._vars["env"] = os.environ.copy()
+        self._vars["bdast"] = self._bdast_vars
+
+        # Recreate the template session
+        self.session = obslib.Session(template_vars=obslib.eval_vars(self._vars))
 
 
 class BdastStep:
