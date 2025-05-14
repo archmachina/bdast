@@ -40,7 +40,22 @@ steps:
       - dep_test_b
       - dep_test_a
 
+  block_test1:
+    block:
+      steps:
+        - name: Command 1
+          command:
+            cmd: echo command 1
+
+        - name: Command 2
+          command:
+            cmd: echo command 2
+
 actions:
+  block_test:
+    steps:
+      - block_test1
+
   semver:
     steps:
       - name: semver_test

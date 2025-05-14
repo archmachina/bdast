@@ -116,7 +116,7 @@ def process_step_semver(action_state, impl_config):
     store = action_state.session.resolve(store, str)
 
     if store == "":
-        raise BdasrRunException("store must have a value")
+        raise BdastRunException("store must have a value")
 
     # Sources - where to source the semver values
     sources = obslib.extract_property(impl_config, "sources", on_missing=None)
@@ -296,14 +296,13 @@ def process_step_block(action_state, impl_config):
 
     # For each of the steps, create a BdastStep
     # Dependencies aren't supported on these steps
-    steps = [BdastStep(x, action_state.session, support_deps=False) for x in steps]
     for item in steps:
         # Extract the step name (required)
         step_name = obslib.extract_property(item, "name")
         step_name = action_state.session.resolve(step_name, str)
 
         # Create a BdastStep
-        step_obj = BdastStep(step_name, item, support_deps=False)
+        step_obj = BdastStep(step_name, item, action_state.session, support_deps=False)
 
         # Execute the step
         step_obj.run(action_state)
