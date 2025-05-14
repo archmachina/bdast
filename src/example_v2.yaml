@@ -43,15 +43,33 @@ steps:
   block_test1:
     block:
       steps:
-        - name: Command 1
+        - desc: Command 1
           command:
             cmd: echo command 1
 
-        - name: Command 2
+        - desc: Command 2
           command:
             cmd: echo command 2
 
 actions:
+  var_test:
+    vars:
+      default: 5
+    steps:
+      - desc: Display the default value
+        command:
+          cmd: "echo {{ default }}"
+
+      - desc: Update the default value
+        vars:
+          set:
+            default: 6
+
+      - desc: Display the default value
+        command:
+          cmd: "echo {{ default }}"
+
+
   block_test:
     steps:
       - block_test1

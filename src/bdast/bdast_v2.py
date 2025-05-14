@@ -296,16 +296,33 @@ def process_step_block(action_state, impl_config):
 
     # For each of the steps, create a BdastStep
     # Dependencies aren't supported on these steps
+    inline_step_count = 1
     for item in steps:
         # Extract the step name (required)
-        step_name = obslib.extract_property(item, "name")
-        step_name = action_state.session.resolve(step_name, str)
+        step_name = obslib.extract_property(item, "name", on_missing=None)
+        step_name = action_state.session.resolve(step_name, (str, type(None)))
+        if step_name is None:
+            step_name = f"__inline_{inline_step_count}"
+            inline_step_count = inline_step_count + 1
 
         # Create a BdastStep
         step_obj = BdastStep(step_name, item, action_state.session, support_deps=False)
 
         # Execute the step
         step_obj.run(action_state)
+
+def process_step_vars(action_state, impl_config):
+
+    # Check incoming parameters
+    val_arg(isinstance(action_state, ActionState), "Invalid ActionState passed to process_step_command")
+    val_arg(isinstance(impl_config, dict), "Invalid impl config passed to process_step_command")
+
+    # Extract steps to execute
+    set_vars = obslib.extract_property(impl_config, "set", on_missing=None)
+    set_vars = action_state.session.resolve(set_vars, (dict, type(None)), depth=0, on_none={})
+
+    # Update vars for action state
+    action_state.update_vars(set_vars)
 
 
 class ActionState:
@@ -367,6 +384,10 @@ class BdastStep:
             self.after = session.resolve(self.after, (list, type(None)), depth=0, on_none=[])
             self.after = set([session.resolve(x, str) for x in self.after])
 
+        # Extract description
+        self.desc = obslib.extract_property(step_def, "desc", on_missing=None)
+        self.desc = session.resolve(self.desc, (str, type(None)), on_none="")
+
         # Extract when
         self.when = obslib.extract_property(step_def, "when", on_missing=None)
         self.when = session.resolve(self.when, (list, str, type(None)), depth=0, on_none=[])
@@ -394,7 +415,10 @@ class BdastStep:
         val_arg(isinstance(action_state, ActionState), "Invalid ActionState passed to BdastStep run")
 
         log_raw("")
-        log_raw(f"**************** STEP {self._step_name}")
+        msg = f"**************** STEP {self._step_name}"
+        if self.desc != "":
+            msg = msg + f" : {self.desc}"
+        log_raw(msg)
 
         # Check whether to run this step
         for condition in self.when:
@@ -414,6 +438,8 @@ class BdastStep:
             process_step_nop(action_state, self._impl_config)
         elif self._step_type == "block":
             process_step_block(action_state, self._impl_config)
+        elif self._step_type == "vars":
+            process_step_vars(action_state, self._impl_config)
         else:
             raise BdastRunException(f"unknown step type: {self._step_type}")
 
@@ -421,9 +447,12 @@ class BdastStep:
         # no remaining unknown properties
         val_run(len(self._impl_config) == 0, f"Unknown properties in step config: {self._impl_config.keys()}")
 
-        log_raw("")
-        log_raw(f"**************** END STEP {self._step_name}")
-        log_raw("")
+#        log_raw("")
+#        msg = f"**************** END STEP {self._step_name}"
+#        if self.desc != "":
+#            msg = msg + f" : {self.desc}"
+#        log_raw(msg)
+#        log_raw("")
 
 class BdastAction:
     def __init__(self, action_name, action_spec, global_vars, steps):
@@ -484,6 +513,7 @@ class BdastAction:
         # Create a templating session
         session = obslib.Session(template_vars=obslib.eval_vars(self._vars))
 
+        inline_step_count = 1
         action_steps = copy.deepcopy(self._action_steps)
         for step_item in action_steps:
 
@@ -500,8 +530,13 @@ class BdastAction:
 
                 # If it's a dict, then it is an inline definition of a step
                 # Extract (/remove) the name from the step definition
-                step_name = obslib.extract_property(step_item, "name")
-                step_name = session.resolve(step_name, str)
+                step_name = obslib.extract_property(step_item, "name", on_missing=None)
+                step_name = session.resolve(step_name, (str, type(None)))
+
+                # If it doesn't have a name, create an inline name
+                if step_name is None:
+                    step_name = f"__inline_{inline_step_count}"
+                    inline_step_count = inline_step_count + 1
 
                 # Check that this step name isn't a global step. Disallow shadowing of
                 # global steps as this would just be confusing.
@@ -767,6 +802,6 @@ def process_spec(spec_file, action_name, action_arg):
 
     action.run(action_arg)
 
-    log_raw("**************** END ACTION")
-    log_raw("")
+#    log_raw("**************** END ACTION")
+#    log_raw("")
 
