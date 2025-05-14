@@ -90,7 +90,7 @@ steps:
       cmd: source ./env/bin/activate && python3 -m twine upload dist/*
       env:
         TWINE_USERNAME: "__token__"
-        TWINE_PASSWORD: $SECRET_PYPI_TOKEN
+        TWINE_PASSWORD: "{{ env.SECRET_PYPI_TOKEN }}"
 
   test:
     bash:
@@ -99,13 +99,18 @@ steps:
   github_release:
     url:
       method: POST
-      url: "xx"
+      url: "https://api.github.com/repos/{{ github_owner }}/{{ github_repo }}/releases"
+      headers:
+        "Accept": "application/vnd.github.v3+json"
+        "Authorization": "token {{ env.SECRET_GITHUB_TOKEN }}"
+        "Content-Type": "application/json"
+        "X-GitHub-Api-Version": "2022-11-28"
       body: |
         {
-          "tag_name": "$SEMVER_FULL",
-          "name": "Version $SEMVER_FULL",
+          "tag_name": "{{ version.original }}",
+          "name": "Version {{ version.full }}",
           "draft": false,
-          "prerelease": $SEMVER_IS_PRERELEASE_WORD,
+          "prerelease": {{ 'true' if version.is_prerelease else 'false' }},
           "generate_release_notes": true
         }
 
@@ -140,25 +145,8 @@ actions:
 
   # Steps to perform when building from a git tag v*
   push_tag_v:
-    env:
-      # Take the semver version from GITHUB_REF by default
-      SEMVER_SOURCE: $GITHUB_REF
     steps:
       - python_build
+      - github_release
       - pypi_release
-      - name: github_release
-        type: github_release
-        owner: $GITHUB_OWNER
-        repo: $GITHUB_REPO
-        token: $GITHUB_TOKEN
-        payload: |
-          {
-            "tag_name": "$SEMVER_FULL",
-            "name": "Version $SEMVER_FULL",
-            "draft": false,
-            "prerelease": $SEMVER_IS_PRERELEASE_WORD,
-            "generate_release_notes": true
-          }
-        env:
-          GITHUB_TOKEN: $SECRET_GITHUB_TOKEN
 

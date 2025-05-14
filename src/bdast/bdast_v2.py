@@ -156,7 +156,7 @@ def process_step_semver(action_state, impl_config):
 
         # Assign semver components to environment vars
         result = {
-            "orig": source,
+            "original": source,
             "full": "" if result[0] is None else result[0],
             "major": "" if result[1] is None else result[1],
             "minor": "" if result[2] is None else result[2],
