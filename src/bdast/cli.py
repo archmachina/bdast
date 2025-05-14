@@ -63,6 +63,9 @@ def load_spec(spec_file, action_name, action_arg):
     if not os.path.isfile(spec_file):
         raise SpecLoadException("Spec file does not exist or is not a file")
 
+    # Convert to an absolute path
+    spec_file = os.path.abspath(spec_file)
+
     # Load spec file
     logger.info("Loading spec: %s", spec_file)
     with open(spec_file, "r", encoding="utf-8") as file:

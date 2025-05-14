@@ -207,7 +207,7 @@ def process_step_command(action_state, impl_config, step_type):
     cmd = action_state.session.resolve(cmd, str)
 
     # Environment variables
-    new_envs = obslib.extract_property(impl_config, "envs", on_missing=None)
+    new_envs = obslib.extract_property(impl_config, "env", on_missing=None)
     new_envs = action_state.session.resolve(new_envs, (dict, type(None)), on_none={})
     for key in new_envs:
         new_envs[key] = action_state.session.resolve(new_envs[key], str)
@@ -396,12 +396,18 @@ class BdastStep:
 
         self.when = [session.resolve(x, str) for x in self.when]
 
-        # There should be a single key left on the step, which will
-        # be the step type to run.
-        val_load(len(step_def) == 1, f"Expected single key for task, found: {step_def.keys()}")
+        # There should be single key or none left on the step.
+        # With a single key, this is the command type to run.
+        # With no keys remaining, the step is implicitly 'nop'
+        val_load(len(step_def) <= 1, f"Expected single key or none for task, found: {step_def.keys()}")
 
         # Extract the step type
-        self._step_type = list(step_def.keys())[0]
+        if len(step_def) > 0:
+            self._step_type = list(step_def.keys())[0]
+        else:
+            self._step_type = "nop"
+
+        # Validate step type
         val_load(isinstance(self._step_type, str), "Step name is not a string")
         val_load(self._step_type != "", "Empty step name")
 
