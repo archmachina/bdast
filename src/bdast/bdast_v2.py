@@ -326,14 +326,19 @@ def process_step_vars(action_state, impl_config):
 
 
 class ActionState:
-    def __init__(self, action_vars, bdast_vars):
+    def __init__(self, action_name, action_arg, action_vars):
 
         # Check incoming parameters
         val_arg(isinstance(action_vars, dict), "Invalid action_vars passed to ActionState")
+        val_arg(isinstance(action_name, str), "Invalid action name passed to ActionState")
+        val_arg(action_name != "", "Empty action name passed to ActionState")
+        val_arg(isinstance(action_arg, str), "Invalid action arg passed to ActionState")
 
-        self._bdast_vars = bdast_vars
+
+        self.action_name = action_name
+        self.action_arg = action_arg
+
         self._vars = {}
-
         self.update_vars(action_vars)
 
     def update_vars(self, new_vars):
@@ -347,7 +352,10 @@ class ActionState:
 
         # Ensure particular keys are set appropriately
         self._vars["env"] = os.environ.copy()
-        self._vars["bdast"] = self._bdast_vars
+        self._vars["bdast"] = {
+            "action_name": self.action_name,
+            "action_arg": self.action_arg
+        }
 
         # Recreate the template session
         self.session = obslib.Session(template_vars=obslib.eval_vars(self._vars))
@@ -452,13 +460,6 @@ class BdastStep:
         # Make sure the implementation extracted all properties and there are
         # no remaining unknown properties
         val_run(len(self._impl_config) == 0, f"Unknown properties in step config: {self._impl_config.keys()}")
-
-#        log_raw("")
-#        msg = f"**************** END STEP {self._step_name}"
-#        if self.desc != "":
-#            msg = msg + f" : {self.desc}"
-#        log_raw(msg)
-#        log_raw("")
 
 class BdastAction:
     def __init__(self, action_name, action_spec, global_vars, steps):
@@ -633,14 +634,20 @@ class BdastAction:
 
             prev_name = step_name
 
-        ########
-        # Process each step
-        completed = set()
-        action_state = ActionState(self._vars, {
-            "action_name": self._action_name,
-            "action_arg": action_arg
-        })
+        # Run the steps from the active step map
+        self._run_active_steps(active_step_map, action_arg)
 
+    def _run_active_steps(self, active_step_map, action_arg):
+
+        # Validate incoming parameters
+        val_arg(isinstance(active_step_map, dict), "Invalid active step map passed to _process_active_steps")
+        val_arg(all([isinstance(x, BdastStep) for x in active_step_map.values()]), "Invalid types in active step map passed to _process_active_steps")
+
+        # Create the action state, which holds the running var state,
+        # along with the 'bdast' vars.
+        action_state = ActionState(self._action_name, action_arg, self._vars)
+
+        completed = set()
         while len(active_step_map) > 0:
             # Find a step that can be run
             step_match = None
