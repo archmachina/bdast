@@ -338,6 +338,9 @@ class ActionState:
         self.action_name = action_name
         self.action_arg = action_arg
 
+        # List of steps that are active in this action
+        self.active_step_map = {}
+
         self._vars = {}
         self.update_vars(action_vars)
 
@@ -507,6 +510,9 @@ class BdastAction:
         # Validate incoming parameters
         val_arg(isinstance(action_arg, str), "Invalid action arg passed to BdastAction run")
 
+        # Create an ActionState to hold the running state of the action
+        action_state = ActionState(self._action_name, action_arg, self._vars)
+
         ########
         # Here we will check for duplicate step name references (seen_step_names), preserve the
         # order of steps from the action (step_order), create a queue for processing dependencies
@@ -568,7 +574,7 @@ class BdastAction:
         ########
         # Find all reachable steps and ensure they are present in the active_step_map
         # Also, create a BdastStep for each of the reachable steps (in active_step_map)
-        active_step_map = {}
+        active_step_map = action_state.active_step_map
         while len(step_queue) > 0:
             step_name = step_queue.pop(0)
 
@@ -635,18 +641,14 @@ class BdastAction:
             prev_name = step_name
 
         # Run the steps from the active step map
-        self._run_active_steps(active_step_map, action_arg)
+        self._run_active_steps(action_state)
 
-    def _run_active_steps(self, active_step_map, action_arg):
+    def _run_active_steps(self, action_state):
 
         # Validate incoming parameters
-        val_arg(isinstance(active_step_map, dict), "Invalid active step map passed to _process_active_steps")
-        val_arg(all([isinstance(x, BdastStep) for x in active_step_map.values()]), "Invalid types in active step map passed to _process_active_steps")
+        val_arg(isinstance(action_state, ActionState), "Invalid ActionState passed to _process_active_steps")
 
-        # Create the action state, which holds the running var state,
-        # along with the 'bdast' vars.
-        action_state = ActionState(self._action_name, action_arg, self._vars)
-
+        active_step_map = action_state.active_step_map
         completed = set()
         while len(active_step_map) > 0:
             # Find a step that can be run
