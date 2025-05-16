@@ -414,11 +414,14 @@ class BdastStep:
         # With no keys remaining, the step is implicitly 'nop'
         val_load(len(step_def) <= 1, f"Expected single key or none for task, found: {step_def.keys()}")
 
-        # Extract the step type
-        if len(step_def) > 0:
-            self._step_type = list(step_def.keys())[0]
-        else:
+        # If there is no step defined, make it 'nop' with an empty implementation configuration
+        if len(step_def) == 0:
             self._step_type = "nop"
+            self._impl_config = {}
+            return
+
+        # Extract the step type
+        self._step_type = list(step_def.keys())[0]
 
         # Validate step type
         val_load(isinstance(self._step_type, str), "Step name is not a string")
