@@ -257,7 +257,9 @@ def process_step_command(action_state, impl_config, step_type):
         call_args = shlex.split(call_args)
 
     logger.debug("Call arguments: %s", call_args)
-    logger.debug("Subprocess args: %s", subprocess_args)
+    debug_args = subprocess_args.copy()
+    debug_args['env'] = "*hidden*"
+    logger.debug("Subprocess args: %s", debug_args)
 
     sys.stdout.flush()
     proc = subprocess.run(call_args, check=False, **subprocess_args)
