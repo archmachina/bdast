@@ -479,20 +479,17 @@ class BdastAction:
         val_arg(isinstance(global_vars, dict), "Invalid global vars passed to BdastAction")
         val_arg(isinstance(steps, dict), "Invalid steps passed to BdastAction")
 
-        # Copy the action so we can check for invalid properties without
-        # changing the original
-        action = copy.deepcopy(action_spec)
-
-        # Save a copy of the action_name, vars and steps
+        # Save copies of parameters
         self._action_name = action_name
         self._vars = copy.deepcopy(global_vars)
         self._steps = copy.deepcopy(steps)
+        action_spec = copy.deepcopy(action_spec)
 
         # Create a session based on the accumulated vars
         session = obslib.Session(template_vars=obslib.eval_vars(self._vars))
 
         # Extract vars from the action to merge in to the working vars
-        action_vars = obslib.extract_property(action, "vars", on_missing=None)
+        action_vars = obslib.extract_property(action_spec, "vars", on_missing=None)
         action_vars = session.resolve(action_vars, (dict, type(None)), depth=0, on_none={})
 
         # Recreate the session with the merged in vars
@@ -502,13 +499,13 @@ class BdastAction:
         # Extract steps from the action
         # Steps in the action can be either a string (referencing another step) or
         # a dict (inline step definition)
-        action_steps = obslib.extract_property(action, "steps", on_missing=None)
+        action_steps = obslib.extract_property(action_spec, "steps", on_missing=None)
         action_steps = session.resolve(action_steps, (list, type(None)), depth=0, on_none=[])
         action_steps = [session.resolve(x, (dict, str), depth=0) for x in action_steps]
         self._action_steps = action_steps
 
         # Validate that there are no unknown properties for the action
-        val_load(len(action.keys()) == 0, f"Invalid properties on action: {action.keys()}")
+        val_load(len(action_spec.keys()) == 0, f"Invalid properties on action: {action_spec.keys()}")
 
     def run(self, action_arg):
 
