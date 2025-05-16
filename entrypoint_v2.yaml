@@ -6,45 +6,6 @@ vars:
   github_repo: bdast
 
 steps:
-  ########
-  # Versioning steps
-  #
-
-  # Capture git sha from the repo
-  git_sha:
-    desc: Extract git sha
-    bash:
-      cmd: git log -1 --format=%h
-      capture: git_sha
-      capture_strip: true
-
-  # Generate a version source using the git sha
-  semver_git_sha:
-    desc: Create git sha based semver version
-    depends_on:
-      - git_sha
-    vars:
-      set:
-        semver_source: "0.1.0-rolling+{{ git_sha }}"
-
-  # Set the semver source to the github ref
-  semver_github_ref:
-    desc: Capture semver information from GITHUB_REF
-    vars:
-      set:
-        semver_source: "{{ env.GITHUB_REF }}"
-
-  # Actual parsing of the version source
-  parse_semver:
-    semver:
-      required: true
-      sources:
-        - "{{ semver_source }}"
-      store: version
-
-  ########
-  # Repo mgmt steps
-  #
 
   clean_dist:
     command:
@@ -59,32 +20,56 @@ steps:
       - clean_dist
       - clean_env
 
-  ########
-  # Python mgmt steps
-  #
+  version:
+    block:
+      steps:
+        - desc: Extract git sha from repo
+          bash:
+            cmd: git log -1 --format=%h
+            capture: git_sha
+            capture_strip: true
 
-  python_env:
-    bash:
-      cmd: >
-        python3 -m venv env &&
-        source ./env/bin/activate &&
-        python3 -m pip install --upgrade pip &&
-        python3 -m pip install --upgrade setuptools build twine ;
-        python3 -m pip install -r requirements.txt
+        - desc: Use git sha for semver version (default)
+          vars:
+            set:
+              semver_source: "0.1.0-rolling+{{ git_sha }}"
+          when:
+            - "semver_source|default('') == ''"
+
+        - desc: Parse semver source
+          semver:
+            required: true
+            sources:
+              - "{{ semver_source }}"
+            store: version
 
   python_build:
-    bash:
-      cmd: source ./env/bin/activate && python3 -m build
-      env:
-        # BUILD_VERSION is referenced in setup.py
-        BUILD_VERSION: "{{ version.major }}.{{ version.minor }}.{{ version.patch }}"
+    block:
+      steps:
+        - desc: Set up python environment
+          bash:
+            cmd: >
+              python3 -m venv env &&
+              source ./env/bin/activate &&
+              python3 -m pip install --upgrade pip &&
+              python3 -m pip install --upgrade setuptools build twine ;
+              python3 -m pip install -r requirements.txt
+
+        - desc: Perform python build
+          bash:
+            cmd: source ./env/bin/activate && python3 -m build
+            env:
+              # BUILD_VERSION is referenced in setup.py
+              BUILD_VERSION: "{{ version.major }}.{{ version.minor }}.{{ version.patch }}"
+    after:
+      - clean
     depends_on:
       - clean_dist
-      - python_env
-      - parse_semver
+      - version
 
   pypi_release:
     depends_on:
+      - clean
       - python_build
     bash:
       cmd: source ./env/bin/activate && python3 -m twine upload dist/*
@@ -92,7 +77,9 @@ steps:
         TWINE_USERNAME: "__token__"
         TWINE_PASSWORD: "{{ env.SECRET_PYPI_TOKEN }}"
 
-  test:
+  test_run:
+    depends_on:
+      - python_build
     bash:
       cmd: dfbar -f src/tests/Dockerfile src
 
@@ -121,31 +108,30 @@ actions:
 
   test:
     steps:
-      - test
+      - test_run
 
   # Standard build
   build:
     steps:
-      - semver_git_sha
       - python_build
 
   # Steps for a pull request to the main branch
   pr_branch_main:
     steps:
-      - semver_git_sha
-      - python_build
-      - test
+      - test_run
 
   # Steps to perform when building on main branch
   push_branch_main:
     steps:
-      - semver_git_sha
-      - python_build
-      - test
+      - test_run
 
   # Steps to perform when building from a git tag v*
   push_tag_v:
     steps:
+      - desc: Capture semver information from GITHUB_REF
+        vars:
+          set:
+            semver_source: "{{ env.GITHUB_REF }}"
       - python_build
       - github_release
       - pypi_release
