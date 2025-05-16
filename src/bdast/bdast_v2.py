@@ -535,26 +535,42 @@ class BdastAction:
         # in the step library
         action_steps = self._convert_inline_steps(action_state, action_steps)
 
-        # Make sure each item in action steps is a string and references a step in
-        # the step library
+        # Validate the action steps list
+        #   Make sure each item in action steps is a string
+        #   Make sure each item references a step in the step library
+        #   Make sure there are no duplicate references
+        seen_steps = set()
         for step_item in action_steps:
             val_run(isinstance(step_item, str), f"Invalid step item in action steps. Found {type(step_item)}")
             val_run(step_item in action_state.step_library, f"Step '{step_item}' does not exist")
-
-        # Make sure we have no duplicate step items in the action step list
-        seen_steps = set()
-        for step_item in action_steps:
             val_run(step_item not in seen_steps, f"Found duplicate step name in action steps: {step_item}")
+
             seen_steps.add(step_item)
 
         # Find all steps reachable from the initial step list
         self._find_reachable_steps(action_state, action_steps)
 
+        # Normalise dependencies - Turn all dependencies in to
+        # just depends_on references
+        self._normalise_dependencies(action_state)
+
         ########
-        # Normalise all of the dependencies and dependents for each step
-        #
-        # Move all of the dependencies to 'depends_on' to make later processing
-        # easier
+        # Apply ordering from step_order to steps
+        prev_name = None
+        for step_name in action_steps:
+            if prev_name is not None:
+                action_state.active_step_map[step_name].depends_on.add(prev_name)
+
+            prev_name = step_name
+
+        # Run the steps from the active step map
+        self._run_active_steps(action_state)
+
+    def _normalise_dependencies(self, action_state):
+
+        # Validate incoming parameters
+        val_arg(isinstance(action_state, ActionState), "Invalid action state passed to _normalise_dependencies")
+
         active_step_map = action_state.active_step_map
         for step_name in active_step_map:
             step_obj = active_step_map[step_name]
@@ -564,6 +580,7 @@ class BdastAction:
             # to be run)
             for item in step_obj.after:
                 if item in active_step_map:
+                    # Make this step depend on the other step
                     step_obj.depends_on.add(item)
 
             step_obj.after.clear()
@@ -572,29 +589,23 @@ class BdastAction:
             # reference on the referenced step
             for item in step_obj.before:
                 if item in active_step_map:
+                    # Make the other step depend on this step
                     active_step_map[item].depends_on.add(step_name)
 
             step_obj.before.clear()
 
             # Convert a 'required_by' reference on this step to a 'depends_on'
             # reference on the referenced step
+            # This should already be in the active step map as it would have
+            # been a reachable step
             for item in step_obj.required_by:
-                if item in active_step_map:
-                    active_step_map[item].depends_on.add(step_name)
+                val_run(item in active_step_map, f"Expected {item} in active step map, but was missing")
+
+                # Make the other step depend on this step
+                active_step_map[item].depends_on.add(step_name)
 
             step_obj.required_by.clear()
 
-        ########
-        # Apply ordering from step_order to steps
-        prev_name = None
-        for step_name in action_steps:
-            if prev_name is not None:
-                active_step_map[step_name].depends_on.add(prev_name)
-
-            prev_name = step_name
-
-        # Run the steps from the active step map
-        self._run_active_steps(action_state)
 
 
     def _find_reachable_steps(self, action_state, action_steps):
