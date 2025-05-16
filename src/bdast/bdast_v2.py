@@ -361,7 +361,7 @@ class ActionState:
         }
 
         # Recreate the template session
-        self.session = obslib.Session(template_vars=obslib.eval_vars(self._vars))
+        self.session = obslib.Session(template_vars=obslib.eval_vars(self._vars, ignore_list=['env', 'bdast']))
 
 
 class BdastStep:
