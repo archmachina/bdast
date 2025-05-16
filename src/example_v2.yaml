@@ -103,6 +103,7 @@ actions:
 
   dep_test:
     steps:
+      - desc: Implicit nop test
       - nop_test
       - name: "setup {{ test }}"
         command:

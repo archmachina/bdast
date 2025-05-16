@@ -308,10 +308,10 @@ def process_step_block(action_state, impl_config):
             inline_step_count = inline_step_count + 1
 
         # Create a BdastStep
-        step_obj = BdastStep(step_name, item, action_state.session, support_deps=False)
+        step_obj = BdastStep(step_name, item, action_state, support_deps=False)
 
         # Execute the step
-        step_obj.run(action_state)
+        step_obj.run()
 
 def process_step_vars(action_state, impl_config):
 
@@ -352,8 +352,7 @@ class ActionState:
         val_arg(isinstance(new_vars, dict), "Invalid vars passed to ActionState update_vars")
 
         # Update vars
-        for name in new_vars:
-            self._vars[name] = new_vars[name]
+        self._vars.update(new_vars)
 
         # Ensure particular keys are set appropriately
         self._vars["env"] = os.environ.copy()
@@ -367,17 +366,20 @@ class ActionState:
 
 
 class BdastStep:
-    def __init__(self, step_name, step_def, session, support_deps=True):
+    def __init__(self, step_name, step_def, action_state, support_deps=True):
 
         # Check incoming parameters
-        val_arg(isinstance(step_def, dict), "Spec provided to BdastStep is not a dictionary")
-        val_arg(isinstance(session, obslib.Session), "Invalid obslib Session passed to BdastStep")
         val_arg(isinstance(step_name, str), "Invalid step name passed to BdastStep")
         val_arg(step_name != "", "Empty step name passed to BdastStep")
+        val_arg(isinstance(step_def, dict), "Spec provided to BdastStep is not a dictionary")
+        val_arg(isinstance(action_state, ActionState), "Invalid action state passed to BdastStep")
 
-        # Make a copy of the definition and save the name
+        # Save incoming parameters
+        # Duplicate the step definition to allow validation of keys
         step_def = step_def.copy()
         self._step_name = step_name
+        self._action_state = action_state
+        session = action_state.session
 
         if support_deps:
             # Extract dependency properties
@@ -431,10 +433,11 @@ class BdastStep:
         self._impl_config = obslib.extract_property(step_def, self._step_type)
         self._impl_config = session.resolve(self._impl_config, (dict, type(None)), depth=0, on_none={})
 
-    def run(self, action_state):
+    def run(self):
 
-        # Check incoming parameters
-        val_arg(isinstance(action_state, ActionState), "Invalid ActionState passed to BdastStep run")
+        # Session from action state
+        action_state = self._action_state
+        session = action_state.session
 
         log_raw("")
         msg = f"**************** STEP {self._step_name}"
@@ -444,7 +447,7 @@ class BdastStep:
 
         # Check whether to run this step
         for condition in self.when:
-            result = action_state.session.resolve("{{" + condition + "}}", bool)
+            result = session.resolve("{{" + condition + "}}", bool)
             if not result:
                 logger.info("Skipping step due to conditional")
                 return
@@ -514,6 +517,7 @@ class BdastAction:
 
         # Create an ActionState to hold the running state of the action
         action_state = ActionState(self._action_name, action_arg, self._vars)
+        session = action_state.session
 
         ########
         # Here we will check for duplicate step name references (seen_step_names), preserve the
@@ -524,9 +528,6 @@ class BdastAction:
         step_order = []
         step_queue = []
         step_library = self._steps.copy()
-
-        # Create a templating session
-        session = obslib.Session(template_vars=obslib.eval_vars(self._vars))
 
         inline_step_count = 1
         action_steps = copy.deepcopy(self._action_steps)
@@ -588,7 +589,7 @@ class BdastAction:
                 continue
 
             # Create a BdastStep and save it in the map
-            active_step_map[step_name] = BdastStep(step_name, step_library[step_name], session)
+            active_step_map[step_name] = BdastStep(step_name, step_library[step_name], action_state)
 
             # Check depends_on and required_by. before and after do not implicitly load
             # a step
@@ -676,7 +677,7 @@ class BdastAction:
                 raise BdastRunException(f"Could not resolve step dependencies")
 
             # Run the step
-            active_step_map[step_match].run(action_state)
+            active_step_map[step_match].run()
 
             # Record the step as completed
             completed.add(step_match)
