@@ -848,6 +848,3 @@ def process_spec(spec_file, action_name, action_arg):
 
     action.run(action_arg)
 
-#    log_raw("**************** END ACTION")
-#    log_raw("")
-
