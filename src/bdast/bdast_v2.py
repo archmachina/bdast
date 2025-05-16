@@ -328,14 +328,12 @@ def process_step_vars(action_state, impl_config):
 
 
 class ActionState:
-    def __init__(self, action_name, action_arg, action_vars):
+    def __init__(self, action_name, action_arg):
 
         # Check incoming parameters
-        val_arg(isinstance(action_vars, dict), "Invalid action_vars passed to ActionState")
         val_arg(isinstance(action_name, str), "Invalid action name passed to ActionState")
         val_arg(action_name != "", "Empty action name passed to ActionState")
         val_arg(isinstance(action_arg, str), "Invalid action arg passed to ActionState")
-
 
         self.action_name = action_name
         self.action_arg = action_arg
@@ -343,8 +341,15 @@ class ActionState:
         # List of steps that are active in this action
         self.active_step_map = {}
 
+        # Library of all known steps
+        self.step_library = {}
+
+        # Vars used in creation of an obslib session for templating
         self._vars = {}
-        self.update_vars(action_vars)
+
+        # Call update_vars to at least make sure a session exists, along with
+        # the base env and bdast vars
+        self.update_vars({})
 
     def update_vars(self, new_vars):
 
@@ -516,96 +521,41 @@ class BdastAction:
         val_arg(isinstance(action_arg, str), "Invalid action arg passed to BdastAction run")
 
         # Create an ActionState to hold the running state of the action
-        action_state = ActionState(self._action_name, action_arg, self._vars)
+        action_state = ActionState(self._action_name, action_arg)
+        action_state.update_vars(self._vars)
         session = action_state.session
 
-        ########
-        # Here we will check for duplicate step name references (seen_step_names), preserve the
-        # order of steps from the action (step_order), create a queue for processing dependencies
-        # (step_queue), and create a working copy of the global steps, which includes the
-        # ephemeral steps (step_library)
-        seen_step_names = set()
-        step_order = []
-        step_queue = []
-        step_library = self._steps.copy()
+        # Copy known steps to the action state step library
+        action_state.step_library.update(copy.deepcopy(self._steps))
 
-        inline_step_count = 1
+        # Work with our own version of action steps
         action_steps = copy.deepcopy(self._action_steps)
+
+        # Convert all inline step definitions to references to steps
+        # in the step library
+        action_steps = self._convert_inline_steps(action_state, action_steps)
+
+        # Make sure each item in action steps is a string and references a step in
+        # the step library
         for step_item in action_steps:
+            val_run(isinstance(step_item, str), f"Invalid step item in action steps. Found {type(step_item)}")
+            val_run(step_item in action_state.step_library, f"Step '{step_item}' does not exist")
 
-            if isinstance(step_item, str):
+        # Make sure we have no duplicate step items in the action step list
+        seen_steps = set()
+        for step_item in action_steps:
+            val_run(step_item not in seen_steps, f"Found duplicate step name in action steps: {step_item}")
+            seen_steps.add(step_item)
 
-                # If it's a string, it's a reference to a global step
-                step_name = step_item
-
-                # Make sure the step name exists globally
-                # Intentionally check 'self._steps' as we want to avoid check against names defined inline
-                val_run(step_item in self._steps, f"Step '{step_item}' does not exist")
-
-            elif isinstance(step_item, dict):
-
-                # If it's a dict, then it is an inline definition of a step
-                # Extract (/remove) the name from the step definition
-                step_name = obslib.extract_property(step_item, "name", on_missing=None)
-                step_name = session.resolve(step_name, (str, type(None)))
-
-                # If it doesn't have a name, create an inline name
-                if step_name is None:
-                    step_name = f"__inline_{inline_step_count}"
-                    inline_step_count = inline_step_count + 1
-
-                # Check that this step name isn't a global step. Disallow shadowing of
-                # global steps as this would just be confusing.
-                val_run(step_name not in self._steps, f"Inline step has identical name to global step: {step_name}")
-
-                # Store the inline step in the step_library
-                step_library[step_name] = step_item
-
-            else:
-                raise BdastRunException(f"Invalid step defined in action with type {type(step_item)}")
-
-            # Make sure there are no duplicate step references
-            # This is because a step will implicitly depend on the prior when defined in the
-            # action steps, so duplicate names will create an unresolvable set of dependencies
-            val_run(step_name not in seen_step_names, f"Duplicate step name reference in action: {step_name}")
-            seen_step_names.add(step_name)
-
-            # Store the name in step_order, so that dependencies can be updated later
-            step_queue.append(step_name)
-            step_order.append(step_name)
-
-        ########
-        # Find all reachable steps and ensure they are present in the active_step_map
-        # Also, create a BdastStep for each of the reachable steps (in active_step_map)
-        active_step_map = action_state.active_step_map
-        while len(step_queue) > 0:
-            step_name = step_queue.pop(0)
-
-            # Make sure this step has a definition
-            val_run(step_name in step_library, f"Reference to non-existant step: {step_name}")
-
-            if step_name in active_step_map:
-                # We've already processed this step_name, so skip
-                continue
-
-            # Create a BdastStep and save it in the map
-            active_step_map[step_name] = BdastStep(step_name, step_library[step_name], action_state)
-
-            # Check depends_on and required_by. before and after do not implicitly load
-            # a step
-            for item in active_step_map[step_name].depends_on:
-                step_queue.append(item)
-
-            for item in active_step_map[step_name].required_by:
-                step_queue.append(item)
-
-        # Now we have active_step_map, which includes all of the reachable steps
+        # Find all steps reachable from the initial step list
+        self._find_reachable_steps(action_state, action_steps)
 
         ########
         # Normalise all of the dependencies and dependents for each step
         #
         # Move all of the dependencies to 'depends_on' to make later processing
         # easier
+        active_step_map = action_state.active_step_map
         for step_name in active_step_map:
             step_obj = active_step_map[step_name]
 
@@ -637,7 +587,7 @@ class BdastAction:
         ########
         # Apply ordering from step_order to steps
         prev_name = None
-        for step_name in step_order:
+        for step_name in action_steps:
             if prev_name is not None:
                 active_step_map[step_name].depends_on.add(prev_name)
 
@@ -645,6 +595,73 @@ class BdastAction:
 
         # Run the steps from the active step map
         self._run_active_steps(action_state)
+
+
+    def _find_reachable_steps(self, action_state, action_steps):
+
+        # Validate incoming parameters
+        val_arg(isinstance(action_state, ActionState), "Invalid action state passed to _find_reachable_steps")
+        val_arg(isinstance(action_steps, list), "Invalid action steps passed to _find_reachable_steps")
+
+        active_step_map = action_state.active_step_map
+        step_queue = action_steps.copy()
+        while len(step_queue) > 0:
+            step_name = step_queue.pop(0)
+
+            if step_name in active_step_map:
+                # We've already processed this step_name, so skip
+                continue
+
+            # Create a BdastStep and save it in the map
+            active_step_map[step_name] = BdastStep(step_name, action_state.step_library[step_name], action_state)
+
+            # Check depends_on and required_by. before and after do not implicitly load
+            # a step
+            for item in active_step_map[step_name].depends_on:
+                step_queue.append(item)
+
+            for item in active_step_map[step_name].required_by:
+                step_queue.append(item)
+
+
+    def _convert_inline_steps(self, action_state, action_steps):
+
+        # Validate incoming parameters
+        val_arg(isinstance(action_state, ActionState), "Invalid action state passed to _convert_inline_steps")
+        val_arg(isinstance(action_steps, list), "Invalid action steps passed to _convert_inline_steps")
+
+        # For each inline step definition, register it in the step library
+        # and convert the entry to a str reference to it
+        new_action_steps = []
+        inline_step_count = 1
+        for step_item in action_steps:
+
+            # Only process 'dict', so an inline step definition
+            if not isinstance(step_item, dict):
+                new_action_steps.append(step_item)
+                continue
+
+            # Extract (/remove) the name from the step definition
+            step_name = obslib.extract_property(step_item, "name", on_missing=None)
+            step_name = action_state.session.resolve(step_name, (str, type(None)))
+
+            # If it doesn't have a name, create an inline name
+            if step_name is None:
+                step_name = f"__inline_{inline_step_count}"
+                inline_step_count = inline_step_count + 1
+
+            # Check that this step name isn't a global step. Disallow shadowing of
+            # global steps as this would just be confusing.
+            val_run(step_name not in action_state.step_library, f"Inline step has identical name to global step: {step_name}")
+
+            # Store the inline step in the step_library
+            action_state.step_library[step_name] = step_item
+
+            # Add to the new action_steps list
+            new_action_steps.append(step_name)
+
+        # Return the new action_steps list
+        return new_action_steps
 
     def _run_active_steps(self, action_state):
 
