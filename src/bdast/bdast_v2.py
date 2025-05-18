@@ -9,28 +9,32 @@ import subprocess
 import sys
 import copy
 import glob
-from string import Template
-from enum import Enum
 
 import requests
 import yaml
 import obslib
 
-from .exception import *
+from .exception import BdastArgumentException
+from .exception import BdastLoadException
+from .exception import BdastRunException
 
 logger = logging.getLogger(__name__)
+
 
 def val_arg(val, message):
     if not val:
         raise BdastArgumentException(message)
 
+
 def val_load(val, message):
     if not val:
         raise BdastLoadException(message)
 
+
 def val_run(val, message):
     if not val:
         raise BdastRunException(message)
+
 
 def log_raw(msg):
     print(msg, flush=True)
@@ -43,6 +47,9 @@ def process_step_nop(action_state, impl_config):
     val_arg(isinstance(impl_config, dict), "Invalid impl config passed to process_step_nop")
 
     # Nothing to actually do, since 'nop'
+
+    # Validate no remaining keys on configuration
+    val_run(len(impl_config)  == 0, f"Expected an empty configuration for nop. Found keys: {impl_config.keys()}")
 
 
 def process_step_url(action_state, impl_config):
@@ -93,13 +100,11 @@ def process_step_url(action_state, impl_config):
         result = {
             "text": response.text,
             "headers": response.headers,
-            "status_code": response.status_code
+            "status_code": response.status_code,
         }
 
         # Update vars with the request result
-        action_state.update_vars({
-            store: result
-        })
+        action_state.update_vars({ store: result })
 
 def process_step_semver(action_state, impl_config):
 
@@ -163,15 +168,13 @@ def process_step_semver(action_state, impl_config):
             "patch": "" if result[3] is None else result[3],
             "prerelease": "" if result[4] is None else result[4],
             "buildmeta": "" if result[5] is None else result[5],
-            "is_prerelease": False if result[4] is None else True,
+            "is_prerelease": result[4] is not None,
         }
 
         log_raw(f"SEMVER version information: {result}")
 
         # Merge semver vars in to environment vars
-        action_state.update_vars({
-            store: result
-        })
+        action_state.update_vars({ store: result })
 
         return
 
@@ -258,7 +261,7 @@ def process_step_command(action_state, impl_config, step_type):
 
     logger.debug("Call arguments: %s", call_args)
     debug_args = subprocess_args.copy()
-    debug_args['env'] = "*hidden*"
+    debug_args["env"] = "*hidden*"
     logger.debug("Subprocess args: %s", debug_args)
 
     sys.stdout.flush()
@@ -312,6 +315,7 @@ def process_step_block(action_state, impl_config):
 
         # Execute the step
         step_obj.run()
+
 
 def process_step_vars(action_state, impl_config):
 
@@ -390,19 +394,19 @@ class BdastStep:
             # Extract dependency properties
             self.depends_on = obslib.extract_property(step_def, "depends_on", on_missing=None)
             self.depends_on = session.resolve(self.depends_on, (list, type(None)), depth=0, on_none=[])
-            self.depends_on = set([session.resolve(x, str) for x in self.depends_on])
+            self.depends_on = {session.resolve(x, str) for x in self.depends_on}
 
             self.required_by = obslib.extract_property(step_def, "required_by", on_missing=None)
             self.required_by = session.resolve(self.required_by, (list, type(None)), depth=0, on_none=[])
-            self.required_by = set([session.resolve(x, str) for x in self.required_by])
+            self.required_by = {session.resolve(x, str) for x in self.required_by}
 
             self.before = obslib.extract_property(step_def, "before", on_missing=None)
             self.before = session.resolve(self.before, (list, type(None)), depth=0, on_none=[])
-            self.before = set([session.resolve(x, str) for x in self.before])
+            self.before = {session.resolve(x, str) for x in self.before}
 
             self.after = obslib.extract_property(step_def, "after", on_missing=None)
             self.after = session.resolve(self.after, (list, type(None)), depth=0, on_none=[])
-            self.after = set([session.resolve(x, str) for x in self.after])
+            self.after = {session.resolve(x, str) for x in self.after}
 
         # Extract description
         self.desc = obslib.extract_property(step_def, "desc", on_missing=None)
@@ -523,7 +527,6 @@ class BdastAction:
         # Create an ActionState to hold the running state of the action
         action_state = ActionState(self._action_name, action_arg)
         action_state.update_vars(self._vars)
-        session = action_state.session
 
         # Copy known steps to the action state step library
         action_state.step_library.update(copy.deepcopy(self._steps))
@@ -606,8 +609,6 @@ class BdastAction:
 
             step_obj.required_by.clear()
 
-
-
     def _find_reachable_steps(self, action_state, action_steps):
 
         # Validate incoming parameters
@@ -633,7 +634,6 @@ class BdastAction:
 
             for item in active_step_map[step_name].required_by:
                 step_queue.append(item)
-
 
     def _convert_inline_steps(self, action_state, action_steps):
 
@@ -702,7 +702,7 @@ class BdastAction:
                 for step_name in active_step_map:
                     log_raw(f"{step_name}: {active_step_map[step_name].depends_on}")
 
-                raise BdastRunException(f"Could not resolve step dependencies")
+                raise BdastRunException("Could not resolve step dependencies")
 
             # Run the step
             active_step_map[step_match].run()
@@ -760,7 +760,6 @@ class BdastSpec:
         # Merge our spec last to allow it to override steps, actions and vars
         self._merge_spec(spec)
 
-
     def _merge_spec(self, spec):
 
         # Validate arguments
@@ -814,10 +813,11 @@ class BdastSpec:
             action_name,
             copy.deepcopy(self._actions[action_name]),
             copy.deepcopy(self._vars),
-            copy.deepcopy(self._steps)
+            copy.deepcopy(self._steps),
         )
 
         return action
+
 
 def process_spec(spec_file, action_name, action_arg):
 

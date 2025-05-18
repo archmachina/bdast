@@ -129,6 +129,8 @@ def process_template(args):
 
     """))
 
+    return 0
+
 
 def process_wrapper(args):
     """
@@ -138,6 +140,8 @@ def process_wrapper(args):
     """
 
     print(WRAPPER)
+
+    return 0
 
 
 def process_run(args):
