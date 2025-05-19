@@ -56,7 +56,7 @@ def process_step_url(action_state, impl_config):
 
     # Headers - headers for the request
     headers = obslib.extract_property(impl_config, "headers", on_missing=None)
-    headers = action_state.session.resolve(headers, (list, type(None)), on_none={})
+    headers = action_state.session.resolve(headers, (dict, type(None)), on_none={})
     for key in headers:
         headers[key] = action_state.session.resolve(headers[key], str)
 
@@ -85,7 +85,7 @@ def process_step_url(action_state, impl_config):
     }
 
     if body is not None:
-        args["body"] = body
+        args["data"] = body
 
     response = requests.request(**args)
     response.raise_for_status()
@@ -128,10 +128,14 @@ def process_step_semver(action_state, impl_config):
     sources = action_state.session.resolve(sources, (list, type(None)), depth=0, on_none=[])
     sources = [action_state.session.resolve(x, str) for x in sources]
 
-    # Strip regex - chars to strip from version sources
-    strip_regex = obslib.extract_property(impl_config, "strip_regex", on_missing=["^refs/tags/", "^v"])
-    strip_regex = action_state.session.resolve(strip_regex, (list, type(None)), depth=0, on_none=[])
-    strip_regex = [action_state.session.resolve(x, str) for x in strip_regex]
+    # Content to remove from the source prior to regex checking
+    discard_regex = obslib.extract_property(impl_config, "discard", on_missing=["^refs/tags/"])
+    discard_regex = action_state.session.resolve(discard_regex, (list, type(None)), depth=0, on_none=[])
+    discard_regex = [action_state.session.resolve(x, str) for x in discard_regex]
+
+    ignore_regex = obslib.extract_property(impl_config, "ignore", on_missing=["^v"])
+    ignore_regex = action_state.session.resolve(ignore_regex, (list, type(None)), depth=0, on_none=[])
+    ignore_regex = [action_state.session.resolve(x, str) for x in ignore_regex]
 
     # Regex for identifying and splitting semver strings
     # Reference: https://semver.org/
@@ -145,23 +149,34 @@ def process_step_semver(action_state, impl_config):
     for source in sources:
         logger.info("Checking %s", source)
 
-        # Strip any components matching strip_regex
-        for regex_item in strip_regex:
-            source = re.sub(regex_item, "", source)
+        # Strip any 'discard' components
+        post_discard_source = source
+        for regex_item in discard_regex:
+            post_discard_source = re.sub(regex_item, "", post_discard_source)
 
-        logger.debug("Source post-regex strip: %s", source)
+        logger.debug("Source after discard strip: %s", post_discard_source)
+
+        # Strip any 'ignore' components
+        post_ignore_source = post_discard_source
+        for regex_item in ignore_regex:
+            post_ignore_source = re.sub(regex_item, "", post_ignore_source)
+
+        logger.debug("Source after ignore strip: %s", post_ignore_source)
 
         # Check if this source is a semver match
-        result = re.match(semver_regex, source)
+        result = re.match(semver_regex, post_ignore_source)
         if result is None:
-            logger.debug("Source (%s) is not a match", source)
+            logger.debug("Source (%s) is not a match", post_ignore_source)
             continue
 
-        logger.info("Semver match on %s", source)
+        logger.info("Semver match on %s", post_ignore_source)
 
         # Assign semver components to environment vars
         result = {
-            "original": source,
+            "source": source,
+            "original": post_discard_source,
+            "post_discard": post_discard_source,
+            "post_ignore": post_ignore_source,
             "full": "" if result[0] is None else result[0],
             "major": "" if result[1] is None else result[1],
             "minor": "" if result[2] is None else result[2],
