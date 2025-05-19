@@ -133,6 +133,6 @@ actions:
           set:
             semver_source: "{{ env.GITHUB_REF }}"
       - python_build
-      - github_release
       - pypi_release
+      - github_release
 
