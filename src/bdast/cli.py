@@ -12,6 +12,8 @@ import textwrap
 import yaml
 
 from . import bdast_v1
+from . import bdast_v2
+
 from .exception import SpecLoadException
 
 logger = logging.getLogger(__name__)
@@ -61,6 +63,9 @@ def load_spec(spec_file, action_name, action_arg):
     if not os.path.isfile(spec_file):
         raise SpecLoadException("Spec file does not exist or is not a file")
 
+    # Convert to an absolute path
+    spec_file = os.path.abspath(spec_file)
+
     # Load spec file
     logger.info("Loading spec: %s", spec_file)
     with open(spec_file, "r", encoding="utf-8") as file:
@@ -91,7 +96,10 @@ def load_spec(spec_file, action_name, action_arg):
     # Process spec as a specific version
     if version == "1":
         logger.info("Processing spec as version 1")
-        bdast_v1.process_spec_v1(spec, action_name, action_arg)
+        bdast_v1.process_spec(spec_file, action_name, action_arg)
+    if version in ("2alpha"):
+        logger.info("Processing spec as version 2")
+        bdast_v2.process_spec(spec_file, action_name, action_arg)
     else:
         raise SpecLoadException(f"Invalid version in spec file: {version}")
 
@@ -121,6 +129,8 @@ def process_template(args):
 
     """))
 
+    return 0
+
 
 def process_wrapper(args):
     """
@@ -130,6 +140,8 @@ def process_wrapper(args):
     """
 
     print(WRAPPER)
+
+    return 0
 
 
 def process_run(args):

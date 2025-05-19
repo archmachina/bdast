@@ -228,7 +228,7 @@ def spec_extract_value(spec, key, *, template_map, failemptystr=False, default=N
     return val
 
 
-def process_spec_v1_step_github_release(step, state):
+def process_spec_step_github_release(step, state):
     # Capture step properties
     owner = str(
         spec_extract_value(step, "owner", failemptystr=True, template_map=state.envs)
@@ -289,7 +289,7 @@ def process_spec_v1_step_github_release(step, state):
     logger.debug("Response text: %s", response.text)
 
 
-def process_spec_v1_step_semver(step, state):
+def process_spec_step_semver(step, state):
     # Capture step properties
     required = parse_bool(
         spec_extract_value(step, "required", default=False, template_map=state.envs)
@@ -372,7 +372,7 @@ def process_spec_v1_step_semver(step, state):
     logger.warning("No semver matches found")
 
 
-def process_spec_v1_step_command(step, state):
+def process_spec_step_command(step, state):
     # Capture relevant properties for this step
     step_type = str(
         spec_extract_value(step, "type", template_map=state.envs, failemptystr=True)
@@ -463,7 +463,7 @@ def process_spec_v1_step_command(step, state):
         log_raw(stdout_capture)
 
 
-def process_spec_v1_step(step_name, step, state):
+def process_spec_step(step_name, step, state):
     # Validate action type
     assert_type(step, dict, "Step is not a dictionary")
 
@@ -507,7 +507,7 @@ def process_spec_v1_step(step_name, step, state):
             raise SpecRunException(f"Reference to step that does not exist: {dep_name}")
 
         dep_ref = state.common.spec["steps"][dep_name]
-        process_spec_v1_step(dep_name, dep_ref, parent_state)
+        process_spec_step(dep_name, dep_ref, parent_state)
 
 
     # Dependencies may have captured a var, so merge parent vars in to a new scope state
@@ -529,11 +529,11 @@ def process_spec_v1_step(step_name, step, state):
 
     # Determine which type of step this is and process
     if step_type in ("command", "pwsh", "bash"):
-        process_spec_v1_step_command(step, state)
+        process_spec_step_command(step, state)
     elif step_type == "semver":
-        process_spec_v1_step_semver(step, state)
+        process_spec_step_semver(step, state)
     elif step_type == "github_release":
-        process_spec_v1_step_github_release(step, state)
+        process_spec_step_github_release(step, state)
     else:
         raise SpecRunException(f"unknown step type: {step_type}")
 
@@ -545,7 +545,7 @@ def process_spec_v1_step(step_name, step, state):
     state.common.mark_step_complete(step_name)
 
 
-def process_spec_v1_action(action, state):
+def process_spec_action(action, state):
     # Create a new scope state
     state = ScopeState(parent=state)
 
@@ -585,12 +585,26 @@ def process_spec_v1_action(action, state):
             )
 
         # Call the processor for this step
-        process_spec_v1_step(step_name, step_ref, state)
+        process_spec_step(step_name, step_ref, state)
 
 
-def process_spec_v1(spec, action_name, action_arg):
-    # Make sure we have a dictionary for the spec
-    assert_type(spec, dict, "Specification is not a dictionary")
+def process_spec(spec_file, action_name, action_arg):
+
+    # Check for spec file
+    if spec_file is None or spec_file == "":
+        raise SpecLoadException("Specification filename missing")
+
+    if not os.path.isfile(spec_file):
+        raise SpecLoadException("Spec file does not exist or is not a file")
+
+    # Load spec file
+    logger.info("Loading spec: %s", spec_file)
+    with open(spec_file, "r", encoding="utf-8") as file:
+        spec = yaml.safe_load(file)
+
+    # Make sure we have a dictionary
+    if not isinstance(spec, dict):
+        raise SpecLoadException("Parsed specification is not a dictionary")
 
     # State for processing
     state = ScopeState()
@@ -625,6 +639,6 @@ def process_spec_v1(spec, action_name, action_arg):
     # Process action
     log_raw("")
     log_raw(f"**************** ACTION {action_name}")
-    process_spec_v1_action(actions[action_name], state)
+    process_spec_action(actions[action_name], state)
     log_raw("**************** END ACTION")
     log_raw("")

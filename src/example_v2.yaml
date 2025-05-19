@@ -1,0 +1,122 @@
+---
+version: 2alpha
+
+vars:
+  test_address: 1.1.1.1
+  default_semver: refs/tags/v0.1.0-rc1+test12
+  bad_semver: x.x.x
+  global: 1
+  test: "{{ other }}"
+  other: 2
+
+steps:
+  nop_test:
+    nop:
+
+  get_hostname:
+    command:
+      cmd: hostname
+      capture: hostname
+      capture_strip: true
+
+  dep_test_a:
+    command:
+      cmd: echo dep_test_a
+
+  dep_test_b:
+    command:
+      cmd: echo dep_test_b
+      capture: CAPTURE
+      capture_strip: true
+    depends_on:
+      - dep_test_a
+
+  dep_test_c:
+    command:
+      cmd: |
+        echo dep_test_c
+        echo "CAPTURE: $CAPTURE"
+    depends_on:
+      - dep_test_b
+      - dep_test_a
+
+  block_test1:
+    block:
+      steps:
+        - desc: Command 1
+          command:
+            cmd: echo command 1
+
+        - desc: Command 2
+          command:
+            cmd: echo command 2
+
+actions:
+  var_test:
+    vars:
+      default: 5
+    steps:
+      - desc: Display the default value
+        command:
+          cmd: "echo {{ default }}"
+
+      - desc: Update the default value
+        vars:
+          set:
+            default: 6
+
+      - desc: Display the default value
+        command:
+          cmd: "echo {{ default }}"
+
+
+  block_test:
+    steps:
+      - block_test1
+
+  semver:
+    steps:
+      - name: semver_test
+        semver:
+          sources:
+            - "xxxx"
+            # - "v0.1.2"
+          required: false
+          store: semver
+
+      - name: print semver
+        command:
+          cmd: "echo {{ semver }}"
+        when: "semver|default('') != ''"
+
+  website:
+    steps:
+      - name: Get website
+        url:
+          url: https://www.google.com.au
+          method: GET
+          store: web_request
+
+      - name: Response code
+        command:
+          cmd: "echo Website response {{ web_request.status_code }}"
+
+  dep_test:
+    steps:
+      - desc: Implicit nop test
+      - nop_test
+      - name: "setup {{ test }}"
+        command:
+          cmd: "echo {{ env.USER }}"
+        depends_on:
+          - get_hostname
+      - name: dep_test_ax
+        command:
+          cmd: echo override dep_test_a
+      - dep_test_c
+      - name: "Display action name"
+        command:
+          cmd: "echo Action: {{ bdast.action_name }} {{ bdast.action_arg }}"
+    vars:
+      test: 1
+
