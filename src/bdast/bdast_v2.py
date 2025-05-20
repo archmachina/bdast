@@ -20,6 +20,7 @@ from .exception import BdastRunException
 
 logger = logging.getLogger(__name__)
 
+EVAL_IGNORE_VARS = ["bdast", "env"]
 
 def val_arg(val, message):
     if not val:
@@ -39,6 +40,22 @@ def val_run(val, message):
 def log_raw(msg):
     print(msg, flush=True)
 
+
+def get_obslib_session(template_vars, bdast_vars=None):
+
+    # Validate incoming parameters
+    val_arg(isinstance(template_vars, dict), "Invalid template_vars passed to get_obslib_session")
+    val_arg(isinstance(bdast_vars, (dict, type(None))), "Invalid bdast_vars passed to get_obslib_session")
+
+    if bdast_vars is None:
+        bdast_vars = {}
+
+    # Make sure the template vars have some mandatory fields
+    template_vars = template_vars.copy()
+    template_vars["env"] = os.environ.copy()
+    template_vars["bdast"] = bdast_vars
+
+    return obslib.Session(template_vars, ignore_list=EVAL_IGNORE_VARS)
 
 def process_step_nop(action_state, impl_config):
 
@@ -379,14 +396,13 @@ class ActionState:
         self._vars.update(new_vars)
 
         # Ensure particular keys are set appropriately
-        self._vars["env"] = os.environ.copy()
-        self._vars["bdast"] = {
+        bdast_vars = {
             "action_name": self.action_name,
             "action_arg": self.action_arg
         }
 
         # Recreate the template session
-        self.session = obslib.Session(template_vars=obslib.eval_vars(self._vars, ignore_list=['env', 'bdast']))
+        self.session = get_obslib_session(self._vars, bdast_vars)
 
 
 class BdastStep:
@@ -513,7 +529,7 @@ class BdastAction:
         action_spec = copy.deepcopy(action_spec)
 
         # Create a session based on the accumulated vars
-        session = obslib.Session(template_vars=obslib.eval_vars(self._vars))
+        session = get_obslib_session(self._vars)
 
         # Extract vars from the action to merge in to the working vars
         action_vars = obslib.extract_property(action_spec, "vars", on_missing=None)
@@ -521,7 +537,7 @@ class BdastAction:
 
         # Recreate the session with the merged in vars
         self._vars.update(action_vars)
-        session = obslib.Session(template_vars=obslib.eval_vars(self._vars))
+        session = get_obslib_session(self._vars)
 
         # Extract steps from the action
         # Steps in the action can be either a string (referencing another step) or
@@ -738,7 +754,7 @@ class BdastSpec:
         spec = copy.deepcopy(spec)
 
         # Create a basic obslib session with no vars
-        session = obslib.Session(template_vars={})
+        session = get_obslib_session(template_vars={})
 
         # Retrieve the global vars - This is only to allow vars to be used in the include directive
         # Leave the vars key in place so it can be used later by _merge_spec
@@ -746,7 +762,7 @@ class BdastSpec:
         temp_vars = session.resolve(temp_vars, (dict, type(None)), depth=0, on_none={})
 
         # Recreate session with the global vars
-        session = obslib.Session(template_vars=obslib.eval_vars(temp_vars))
+        session = get_obslib_session(temp_vars)
 
         # Get a list of includes for this spec
         # Only resolve the root level object to a list, then individually
@@ -781,7 +797,7 @@ class BdastSpec:
         val_arg(isinstance(spec, dict), "Invalid spec passed to _merge_spec")
 
         # Create a basic obslib session with no vars
-        session = obslib.Session(template_vars={})
+        session = get_obslib_session(template_vars={})
 
         # Retrieve the version from the spec
         # Version is mandatory - no missing or none value replacement
@@ -796,7 +812,7 @@ class BdastSpec:
 
         # Recreate the session based specifically on this specs vars (not
         # the accumulated vars in self._vars)
-        session = obslib.Session(template_vars=obslib.eval_vars(spec_vars))
+        session = get_obslib_session(spec_vars)
 
         # Read the actions from the spec
         spec_actions = obslib.extract_property(spec, "actions", on_missing=None)
@@ -809,7 +825,7 @@ class BdastSpec:
         spec_steps = obslib.extract_property(spec, "steps", on_missing=None)
         spec_steps = session.resolve(spec_steps, (dict, type(None)), depth=0, on_none={})
         for key in spec_steps:
-            spec_steps[key] = session.resolve(spec_steps[key], dict, depth=0)
+            spec_steps[key] = session.resolve(spec_steps[key], (dict, type(None)), depth=0, on_none={})
         self._steps.update(spec_steps)
 
         # Make sure there are no other keys on this spec

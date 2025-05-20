@@ -2,6 +2,7 @@
 import pytest
 import os
 import bdast
+import jinja2
 
 from bdast import bdast_v2
 from bdast.bdast_v2 import ActionState
@@ -44,9 +45,7 @@ class TestActionState:
         action_state = ActionState("test", "")
 
         assert action_state is not None
-        assert "env" in action_state._vars
-        assert "TESTER" in action_state._vars["env"]
-        assert action_state._vars["env"]["TESTER"] == "67"
+        assert action_state.session.resolve("{{ env.TESTER }}") == "67"
 
     def test_env2(self):
         # Check environment variables
@@ -56,34 +55,25 @@ class TestActionState:
         action_state = ActionState("test", "")
 
         assert action_state is not None
-        assert "env" in action_state._vars
-        assert "TESTER" not in action_state._vars["env"]
+
+        with pytest.raises(jinja2.exceptions.UndefinedError):
+            action_state.session.resolve("{{ env.TESTER }}") == "67"
 
     def test_bdast_var1(self):
         # Check for bdast variable and content
 
         action_state = ActionState("test", "")
 
-        assert "bdast" in action_state._vars
-
-        assert "action_name" in action_state._vars["bdast"]
-        assert action_state._vars["bdast"]["action_name"] == "test"
-
-        assert "action_arg" in action_state._vars["bdast"]
-        assert action_state._vars["bdast"]["action_arg"] == ""
+        action_state.session.resolve("{{ bdast.action_name }}") == "test"
+        action_state.session.resolve("{{ bdast.action_arg }}") == ""
 
     def test_bdast_var2(self):
         # Check for bdast variable and content
 
         action_state = ActionState("other", "arg1")
 
-        assert "bdast" in action_state._vars
-
-        assert "action_name" in action_state._vars["bdast"]
-        assert action_state._vars["bdast"]["action_name"] == "other"
-
-        assert "action_arg" in action_state._vars["bdast"]
-        assert action_state._vars["bdast"]["action_arg"] == "arg1"
+        action_state.session.resolve("{{ bdast.action_name }}") == "other"
+        action_state.session.resolve("{{ bdast.action_arg }}") == "arg1"
 
     def test_var1(self):
         # Check presence of var
@@ -101,16 +91,15 @@ class TestActionState:
     def test_var2(self):
         # Validate bdast var cannot be overwritten
 
-        action_state = ActionState("test", "")
+        action_state = ActionState("test", "arg1")
 
-        assert "bdast" in action_state._vars
+        assert action_state.session.resolve("{{ bdast.action_name }}") == "test"
+        assert action_state.session.resolve("{{ bdast.action_arg }}") == "arg1"
 
         action_state.update_vars({"bdast": 54})
 
-        assert "bdast" in action_state._vars
-        assert isinstance(action_state._vars["bdast"], dict)
-        assert "action_name" in action_state._vars["bdast"]
-        assert "action_arg" in action_state._vars["bdast"]
+        assert action_state.session.resolve("{{ bdast.action_name }}") == "test"
+        assert action_state.session.resolve("{{ bdast.action_arg }}") == "arg1"
 
     def test_var3(self):
         # Validate env var cannot be overwritten
@@ -121,26 +110,23 @@ class TestActionState:
         os.environ.pop("TESTER4", None)
 
         # Make sure we have env and no TESTER4
-        assert "env" in action_state._vars
-        assert "TESTER4" not in action_state._vars["env"]
+        with pytest.raises(jinja2.exceptions.UndefinedError):
+            action_state.session.resolve("{{ env.TESTER4 }}")
 
         # Add TESTER4, which doesn't change action_state vars
         os.environ["TESTER4"] = "OTHER4"
-        assert "TESTER4" not in action_state._vars["env"]
+        with pytest.raises(jinja2.exceptions.UndefinedError):
+            action_state.session.resolve("{{ env.TESTER4 }}")
 
         # Update vars, which recreates env
         action_state.update_vars({})
-        assert "TESTER4" in action_state._vars["env"]
-        assert action_state._vars["env"]["TESTER4"] == "OTHER4"
+        assert action_state.session.resolve("{{ env.TESTER4 }}") == "OTHER4"
 
         # Attempt to overwrite env
         action_state.update_vars({"env": 65})
 
         # Make sure env looks correct
-        assert "env" in action_state._vars
-        assert isinstance(action_state._vars["env"], dict)
-        assert "TESTER4" in action_state._vars["env"]
-        assert action_state._vars["env"]["TESTER4"] == "OTHER4"
+        assert action_state.session.resolve("{{ env.TESTER4 }}") == "OTHER4"
 
 # TODO testing
 # obslib session

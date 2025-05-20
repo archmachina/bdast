@@ -1,6 +1,6 @@
 PyYAML==6.0.1
 Jinja2==3.1.6
 pytest==8.3.2
-obslib==0.6.0
+obslib==0.6.2
 requests==2.32.3
 
