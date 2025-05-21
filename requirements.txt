@@ -1,2 +1,4 @@
-bdast==0.4.2
+bdast==0.4.6
 dfbar==0.4.2
+pylint==3.3.7
+
