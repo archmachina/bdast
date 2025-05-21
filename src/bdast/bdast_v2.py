@@ -560,7 +560,8 @@ class BdastAction:
         action_state.update_vars(self._vars)
 
         # Copy known steps to the action state step library
-        action_state.step_library.update(copy.deepcopy(self._steps))
+        for step_name in self._steps:
+            action_state.step_library[step_name] = BdastStep(step_name, self._steps[step_name], action_state)
 
         # Work with our own version of action steps
         action_steps = copy.deepcopy(self._action_steps)
@@ -630,13 +631,12 @@ class BdastAction:
 
             # Convert a 'required_by' reference on this step to a 'depends_on'
             # reference on the referenced step
-            # This should already be in the active step map as it would have
-            # been a reachable step
+            # The target may not be in the active step map as required_by does not
+            # include the referenced step.
             for item in step_obj.required_by:
-                val_run(item in active_step_map, f"Expected {item} in active step map, but was missing")
-
-                # Make the other step depend on this step
-                active_step_map[item].depends_on.add(step_name)
+                if item in active_step_map:
+                    # Make the other step depend on this step
+                    active_step_map[item].depends_on.add(step_name)
 
             step_obj.required_by.clear()
 
@@ -650,21 +650,27 @@ class BdastAction:
         step_queue = action_steps.copy()
         while len(step_queue) > 0:
             step_name = step_queue.pop(0)
+            logger.debug("Checking reachable steps for %s", step_name)
 
             if step_name in active_step_map:
                 # We've already processed this step_name, so skip
                 continue
 
-            # Create a BdastStep and save it in the map
-            active_step_map[step_name] = BdastStep(step_name, action_state.step_library[step_name], action_state)
+            # Copy the step from the library to the active step map
+            active_step_map[step_name] = action_state.step_library[step_name]
 
             # Check depends_on and required_by. before and after do not implicitly load
             # a step
             for item in active_step_map[step_name].depends_on:
+                logger.debug("depends on %s", item)
                 step_queue.append(item)
 
-            for item in active_step_map[step_name].required_by:
-                step_queue.append(item)
+            for other_name in action_state.step_library:
+                other_item = action_state.step_library[other_name]
+
+                if step_name in other_item.required_by:
+                    logger.debug("%s requires us", other_name)
+                    step_queue.append(other_name)
 
     def _convert_inline_steps(self, action_state, action_steps):
 
@@ -697,7 +703,7 @@ class BdastAction:
             val_run(step_name not in action_state.step_library, f"Inline step has identical name to global step: {step_name}")
 
             # Store the inline step in the step_library
-            action_state.step_library[step_name] = step_item
+            action_state.step_library[step_name] = BdastStep(step_name, step_item, action_state)
 
             # Add to the new action_steps list
             new_action_steps.append(step_name)
