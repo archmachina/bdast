@@ -64,16 +64,16 @@ class TestActionState:
 
         action_state = ActionState("test", "")
 
-        action_state.session.resolve("{{ bdast.action_name }}") == "test"
-        action_state.session.resolve("{{ bdast.action_arg }}") == ""
+        assert action_state.session.resolve("{{ bdast.action_name }}") == "test"
+        assert action_state.session.resolve("{{ bdast.action_arg }}") == ""
 
     def test_bdast_var2(self):
         # Check for bdast variable and content
 
         action_state = ActionState("other", "arg1")
 
-        action_state.session.resolve("{{ bdast.action_name }}") == "other"
-        action_state.session.resolve("{{ bdast.action_arg }}") == "arg1"
+        assert action_state.session.resolve("{{ bdast.action_name }}") == "other"
+        assert action_state.session.resolve("{{ bdast.action_arg }}") == "arg1"
 
     def test_var1(self):
         # Check presence of var
