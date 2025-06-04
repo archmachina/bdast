@@ -561,7 +561,30 @@ class BdastAction:
 
         # Copy known steps to the action state step library
         for step_name in self._steps:
-            action_state.step_library[step_name] = BdastStep(step_name, self._steps[step_name], action_state)
+            # This is the only place that '@' steps are allowed - Defined globally as 'steps' (not inline
+            # or in a block)
+            # If the step in the step library begins with a '@', create two versions of the step, one
+            # with a begin suffix and the other with an end suffix.
+            if len(step_name) > 0 and step_name[0] == "@":
+                # New step names to create
+                begin_name = step_name[1:] + ":begin"
+                end_name = step_name[1:] + ":end"
+
+                # Create the begin and end steps
+                begin_step = BdastStep(begin_name, self._steps[step_name], action_state)
+                end_step = BdastStep(end_name, self._steps[step_name], action_state)
+
+                # Make sure they are 'nop' type steps
+                val_load(
+                    begin_step._step_type == "nop" and end_step._step_type == "nop",
+                    f"Invalid step type for '@' step {step_name} - Must be 'nop'"
+                )
+
+                action_state.step_library[begin_name] = begin_step
+                action_state.step_library[end_name] = end_step
+
+            else:
+                action_state.step_library[step_name] = BdastStep(step_name, self._steps[step_name], action_state)
 
         # Work with our own version of action steps
         action_steps = copy.deepcopy(self._action_steps)
