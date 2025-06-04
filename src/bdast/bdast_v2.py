@@ -580,6 +580,7 @@ class BdastAction:
                     f"Invalid step type for '@' step {step_name} - Must be 'nop'"
                 )
 
+                # Add the new begin and end steps to the step library
                 action_state.step_library[begin_name] = begin_step
                 action_state.step_library[end_name] = end_step
 
