@@ -411,6 +411,7 @@ class BdastStep:
         # Check incoming parameters
         val_arg(isinstance(step_name, str), "Invalid step name passed to BdastStep")
         val_arg(step_name != "", "Empty step name passed to BdastStep")
+        val_arg(re.fullmatch("^[A-Za-z0-9:_-]+$", step_name) is not None, f"Invalid characters in step name: {step_name}")
         val_arg(isinstance(step_def, dict), "Spec provided to BdastStep is not a dictionary")
         val_arg(isinstance(action_state, ActionState), "Invalid action state passed to BdastStep")
 
