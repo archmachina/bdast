@@ -10,6 +10,8 @@ vars:
   other: 2
 
 steps:
+  +build:
+
   nop_test:
     nop:
 
@@ -24,6 +26,7 @@ steps:
       cmd: echo dep_test_a
 
   dep_test_b:
+    name: Dependency test b
     command:
       cmd: echo dep_test_b
       capture: CAPTURE
@@ -39,33 +42,55 @@ steps:
     depends_on:
       - dep_test_b
       - dep_test_a
+    required_by:
+      - dep_test_d
+
+  dep_test_d:
+    command:
+      cmd: echo dep_test_d
 
   block_test1:
     block:
       steps:
-        - desc: Command 1
+        - name: Command 1
           command:
             cmd: echo command 1
 
-        - desc: Command 2
+        - name: Command 2
           command:
             cmd: echo command 2
+
+  setup_task:
+    command:
+      cmd: echo in setup
+    depends_on:
+      - "setup:begin"
+    required_by:
+      - "setup:end"
+
+  +setup:
+
+  +build:
+    depends_on:
+      - +setup
+
+  +finish:
 
 actions:
   var_test:
     vars:
       default: 5
     steps:
-      - desc: Display the default value
+      - name: Display the default value
         command:
           cmd: "echo {{ default }}"
 
-      - desc: Update the default value
+      - name: Update the default value
         vars:
           set:
             default: 6
 
-      - desc: Display the default value
+      - name: Display the default value
         command:
           cmd: "echo {{ default }}"
 
@@ -103,7 +128,7 @@ actions:
 
   dep_test:
     steps:
-      - desc: Implicit nop test
+      - name: Implicit nop test
       - nop_test
       - name: "setup {{ test }}"
         command:
@@ -117,6 +142,14 @@ actions:
       - name: "Display action name"
         command:
           cmd: "echo Action: {{ bdast.action_name }} {{ bdast.action_arg }}"
+      - command:
+          cmd: echo this is unnamed
     vars:
       test: 1
+
+  group_test:
+    steps:
+      - +setup
+      - +build
+      - +finish
 

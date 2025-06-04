@@ -61,12 +61,13 @@ def process_step_nop(action_state, impl_config):
 
     # Validate incoming parameters
     val_arg(isinstance(action_state, ActionState), "Invalid action state passed to process_step_nop")
-    val_arg(isinstance(impl_config, dict), "Invalid impl config passed to process_step_nop")
+    val_arg(isinstance(impl_config, (dict, type(None))), "Invalid impl config passed to process_step_nop")
 
     # Nothing to actually do, since 'nop'
 
     # Validate no remaining keys on configuration
-    val_run(len(impl_config)  == 0, f"Expected an empty configuration for nop. Found keys: {impl_config.keys()}")
+    if isinstance(impl_config, dict):
+        val_run(len(impl_config)  == 0, f"Expected an empty configuration for nop. Found keys: {impl_config.keys()}")
 
 
 def process_step_url(action_state, impl_config):
@@ -335,15 +336,8 @@ def process_step_block(action_state, impl_config):
     # Dependencies aren't supported on these steps
     inline_step_count = 1
     for item in steps:
-        # Extract the step name (required)
-        step_name = obslib.extract_property(item, "name", on_missing=None)
-        step_name = action_state.session.resolve(step_name, (str, type(None)))
-        if step_name is None:
-            step_name = f"__inline_{inline_step_count}"
-            inline_step_count = inline_step_count + 1
-
         # Create a BdastStep
-        step_obj = BdastStep(step_name, item, action_state, support_deps=False)
+        step_obj = BdastStep(item, action_state, support_deps=False)
 
         # Execute the step
         step_obj.run()
@@ -406,19 +400,15 @@ class ActionState:
 
 
 class BdastStep:
-    def __init__(self, step_name, step_def, action_state, support_deps=True):
+    def __init__(self, step_def, action_state, support_deps=True):
 
         # Check incoming parameters
-        val_arg(isinstance(step_name, str), "Invalid step name passed to BdastStep")
-        val_arg(step_name != "", "Empty step name passed to BdastStep")
-        val_arg(re.fullmatch("^[A-Za-z0-9:_-]+$", step_name) is not None, f"Invalid characters in step name: {step_name}")
         val_arg(isinstance(step_def, dict), "Spec provided to BdastStep is not a dictionary")
         val_arg(isinstance(action_state, ActionState), "Invalid action state passed to BdastStep")
 
         # Save incoming parameters
         # Duplicate the step definition to allow validation of keys
         step_def = step_def.copy()
-        self._step_name = step_name
         self._action_state = action_state
         session = action_state.session
 
@@ -440,9 +430,9 @@ class BdastStep:
             self.after = session.resolve(self.after, (list, type(None)), depth=0, on_none=[])
             self.after = {session.resolve(x, str) for x in self.after}
 
-        # Extract description
-        self.desc = obslib.extract_property(step_def, "desc", on_missing=None)
-        self.desc = session.resolve(self.desc, (str, type(None)), on_none="")
+        # Extract name
+        self.name = obslib.extract_property(step_def, "name", on_missing=None)
+        self.name = session.resolve(self.name, (str, type(None)), on_none="")
 
         # Extract when
         self.when = obslib.extract_property(step_def, "when", on_missing=None)
@@ -467,12 +457,11 @@ class BdastStep:
         self._step_type = list(step_def.keys())[0]
 
         # Validate step type
-        val_load(isinstance(self._step_type, str), "Step name is not a string")
-        val_load(self._step_type != "", "Empty step name")
+        val_load(isinstance(self._step_type, str), "Step type is not a string")
+        val_load(self._step_type != "", "Empty step type")
 
         # Extract the implementation specific configuration
         self._impl_config = obslib.extract_property(step_def, self._step_type)
-        self._impl_config = session.resolve(self._impl_config, (dict, type(None)), depth=0, on_none={})
 
     def run(self):
 
@@ -480,11 +469,12 @@ class BdastStep:
         action_state = self._action_state
         session = action_state.session
 
+        step_name = "(unnamed)"
+        if isinstance(self.name, str) and self.name != "":
+            step_name = self.name
+
         log_raw("")
-        msg = f"**************** STEP {self._step_name}"
-        if self.desc != "":
-            msg = msg + f" : {self.desc}"
-        log_raw(msg)
+        log_raw(f"**************** STEP: {step_name}")
 
         # Check whether to run this step
         for condition in self.when:
@@ -511,7 +501,8 @@ class BdastStep:
 
         # Make sure the implementation extracted all properties and there are
         # no remaining unknown properties
-        val_run(len(self._impl_config) == 0, f"Unknown properties in step config: {self._impl_config.keys()}")
+        if isinstance(self._impl_config, dict):
+            val_run(len(self._impl_config) == 0, f"Unknown properties in step config: {self._impl_config.keys()}")
 
 class BdastAction:
     def __init__(self, action_name, action_spec, global_vars, steps):
@@ -561,32 +552,35 @@ class BdastAction:
         action_state.update_vars(self._vars)
 
         # Copy known steps to the action state step library
-        for step_name in self._steps:
-            # This is the only place that '@' steps are allowed - Defined globally as 'steps' (not inline
-            # or in a block)
-            # If the step in the step library begins with a '@', create two versions of the step, one
-            # with a begin suffix and the other with an end suffix.
-            if len(step_name) > 0 and step_name[0] == "@":
+        for step_id in self._steps:
+            if step_id.startswith("+"):
                 # New step names to create
-                begin_name = step_name[1:] + ":begin"
-                end_name = step_name[1:] + ":end"
+                begin_id = step_id[1:] + ":begin"
+                end_id = step_id[1:] + ":end"
 
                 # Create the begin and end steps
-                begin_step = BdastStep(begin_name, self._steps[step_name], action_state)
-                end_step = BdastStep(end_name, self._steps[step_name], action_state)
+                begin_step = BdastStep(self._steps[step_id], action_state)
+                end_step = BdastStep(self._steps[step_id], action_state)
+                end_step.depends_on.add(begin_id)
 
                 # Make sure they are 'nop' type steps
                 val_load(
                     begin_step._step_type == "nop" and end_step._step_type == "nop",
-                    f"Invalid step type for '@' step {step_name} - Must be 'nop'"
+                    f"Invalid step type for '+' step {step_id} - Must be 'nop'"
                 )
 
                 # Add the new begin and end steps to the step library
-                action_state.step_library[begin_name] = begin_step
-                action_state.step_library[end_name] = end_step
-
+                action_state.step_library[begin_id] = begin_step
+                action_state.step_library[end_id] = end_step
             else:
-                action_state.step_library[step_name] = BdastStep(step_name, self._steps[step_name], action_state)
+                new_step = BdastStep(self._steps[step_id], action_state)
+
+                # Use the step id as the name, if the step does not already
+                # have a name
+                if new_step.name is None or new_step.name == "":
+                    new_step.name = step_id
+
+                action_state.step_library[step_id] = new_step
 
         # Work with our own version of action steps
         action_steps = copy.deepcopy(self._action_steps)
@@ -594,6 +588,10 @@ class BdastAction:
         # Convert all inline step definitions to references to steps
         # in the step library
         action_steps = self._convert_inline_steps(action_state, action_steps)
+
+        # Convert "+" references to the begin and end steps that are created
+        # for it
+        action_steps = self._convert_plus_references(action_state, action_steps)
 
         # Validate the action steps list
         #   Make sure each item in action steps is a string
@@ -603,7 +601,7 @@ class BdastAction:
         for step_item in action_steps:
             val_run(isinstance(step_item, str), f"Invalid step item in action steps. Found {type(step_item)}")
             val_run(step_item in action_state.step_library, f"Step '{step_item}' does not exist")
-            val_run(step_item not in seen_steps, f"Found duplicate step name in action steps: {step_item}")
+            val_run(step_item not in seen_steps, f"Found duplicate step id in action steps: {step_item}")
 
             seen_steps.add(step_item)
 
@@ -616,12 +614,12 @@ class BdastAction:
 
         ########
         # Apply ordering from step_order to steps
-        prev_name = None
-        for step_name in action_steps:
-            if prev_name is not None:
-                action_state.active_step_map[step_name].depends_on.add(prev_name)
+        prev_id = None
+        for step_id in action_steps:
+            if prev_id is not None:
+                action_state.active_step_map[step_id].depends_on.add(prev_id)
 
-            prev_name = step_name
+            prev_id = step_id
 
         # Run the steps from the active step map
         self._run_active_steps(action_state)
@@ -632,13 +630,22 @@ class BdastAction:
         val_arg(isinstance(action_state, ActionState), "Invalid action state passed to _normalise_dependencies")
 
         active_step_map = action_state.active_step_map
-        for step_name in active_step_map:
-            step_obj = active_step_map[step_name]
+        for step_id in active_step_map:
+            step_obj = active_step_map[step_id]
+
+            # Convert any depends_on '+' references
+            for item in step_obj.depends_on.copy():
+                if item.startswith("+"):
+                    step_obj.depends_on.remove(item)
+                    step_obj.depends_on.add(item[1:] + ":end")
 
             # Add any 'after' references to 'depends_on', it the item exists
             # (after is a weak dependency - Only applies if the target step is going
             # to be run)
             for item in step_obj.after:
+                if item.startswith("+"):
+                    item = item[1:] + ":end"
+
                 if item in active_step_map:
                     # Make this step depend on the other step
                     step_obj.depends_on.add(item)
@@ -648,9 +655,12 @@ class BdastAction:
             # Convert a 'before' reference on this step to a 'depends_on'
             # reference on the referenced step
             for item in step_obj.before:
+                if item.startswith("+"):
+                    item = item[1:] + ":begin"
+
                 if item in active_step_map:
                     # Make the other step depend on this step
-                    active_step_map[item].depends_on.add(step_name)
+                    active_step_map[item].depends_on.add(step_id)
 
             step_obj.before.clear()
 
@@ -659,9 +669,12 @@ class BdastAction:
             # The target may not be in the active step map as required_by does not
             # include the referenced step.
             for item in step_obj.required_by:
+                if item.startswith("+"):
+                    item = item[1:] + ":begin"
+
                 if item in active_step_map:
                     # Make the other step depend on this step
-                    active_step_map[item].depends_on.add(step_name)
+                    active_step_map[item].depends_on.add(step_id)
 
             step_obj.required_by.clear()
 
@@ -674,28 +687,46 @@ class BdastAction:
         active_step_map = action_state.active_step_map
         step_queue = action_steps.copy()
         while len(step_queue) > 0:
-            step_name = step_queue.pop(0)
-            logger.debug("Checking reachable steps for %s", step_name)
+            step_id = step_queue.pop(0)
+            logger.debug("Checking reachable steps for %s", step_id)
 
-            if step_name in active_step_map:
-                # We've already processed this step_name, so skip
+            if step_id in active_step_map:
+                # We've already processed this step_id, so skip
                 continue
 
             # Copy the step from the library to the active step map
-            active_step_map[step_name] = action_state.step_library[step_name]
+            active_step_map[step_id] = action_state.step_library[step_id]
 
             # Check depends_on and required_by. before and after do not implicitly load
             # a step
-            for item in active_step_map[step_name].depends_on:
+            for item in active_step_map[step_id].depends_on:
                 logger.debug("depends on %s", item)
                 step_queue.append(item)
 
-            for other_name in action_state.step_library:
-                other_item = action_state.step_library[other_name]
+            for other_id in action_state.step_library:
+                other_item = action_state.step_library[other_id]
 
-                if step_name in other_item.required_by:
-                    logger.debug("%s requires us", other_name)
-                    step_queue.append(other_name)
+                if step_id in other_item.required_by:
+                    logger.debug("%s requires us", other_id)
+                    step_queue.append(other_id)
+
+    def _convert_plus_references(self, action_state, action_steps):
+
+        # Validate incoming parameters
+        val_arg(isinstance(action_state, ActionState), "Invalid action state passed to _convert_plus_reference")
+        val_arg(isinstance(action_steps, list), "Invalid action steps passed to _convert_plus_reference")
+
+        # Convert any references to '+' steps to references to the
+        # begin and end
+        new_steps = []
+        for step_item in action_steps:
+            if step_item.startswith("+"):
+                new_steps.append(step_item[1:] + ":begin")
+                new_steps.append(step_item[1:] + ":end")
+            else:
+                new_steps.append(step_item)
+
+        return new_steps
 
     def _convert_inline_steps(self, action_state, action_steps):
 
@@ -714,24 +745,18 @@ class BdastAction:
                 new_action_steps.append(step_item)
                 continue
 
-            # Extract (/remove) the name from the step definition
-            step_name = obslib.extract_property(step_item, "name", on_missing=None)
-            step_name = action_state.session.resolve(step_name, (str, type(None)))
+            # Create a unique inline step id
+            step_id = f"__inline_{inline_step_count}"
+            inline_step_count = inline_step_count + 1
 
-            # If it doesn't have a name, create an inline name
-            if step_name is None:
-                step_name = f"__inline_{inline_step_count}"
-                inline_step_count = inline_step_count + 1
-
-            # Check that this step name isn't a global step. Disallow shadowing of
-            # global steps as this would just be confusing.
-            val_run(step_name not in action_state.step_library, f"Inline step has identical name to global step: {step_name}")
+            # Sanity check - Verify that this step id isn't a global step
+            val_run(step_id not in action_state.step_library, f"Inline step has identical id to global step: {step_id}")
 
             # Store the inline step in the step_library
-            action_state.step_library[step_name] = BdastStep(step_name, step_item, action_state)
+            action_state.step_library[step_id] = BdastStep(step_item, action_state)
 
             # Add to the new action_steps list
-            new_action_steps.append(step_name)
+            new_action_steps.append(step_id)
 
         # Return the new action_steps list
         return new_action_steps
@@ -747,22 +772,22 @@ class BdastAction:
             # Find a step that can be run
             step_match = None
 
-            for step_name in active_step_map:
-                step_obj = active_step_map[step_name]
+            for step_id in active_step_map:
+                step_obj = active_step_map[step_id]
 
                 # Make sure any completed steps are removed from dependencies
                 step_obj.depends_on.difference_update(completed)
 
                 if len(step_obj.depends_on) == 0:
                     # Found a step that can be run
-                    step_match = step_name
+                    step_match = step_id
                     break
 
             # If we found nothing to run, then there may be a circular dependency
             if step_match is None:
                 log_raw("Found steps with unresolvable dependencies:")
-                for step_name in active_step_map:
-                    log_raw(f"{step_name}: {active_step_map[step_name].depends_on}")
+                for step_id in active_step_map:
+                    log_raw(f"{step_id}: {active_step_map[step_id].depends_on}")
 
                 raise BdastRunException("Could not resolve step dependencies")
 
@@ -856,6 +881,9 @@ class BdastSpec:
         spec_steps = obslib.extract_property(spec, "steps", on_missing=None)
         spec_steps = session.resolve(spec_steps, (dict, type(None)), depth=0, on_none={})
         for key in spec_steps:
+            # Regex validation for steps
+            val_load(re.fullmatch("[+]?[a-zA-Z0-9_-]+", key), f"Invalid characters in step id: {key}")
+
             spec_steps[key] = session.resolve(spec_steps[key], (dict, type(None)), depth=0, on_none={})
         self._steps.update(spec_steps)
 
@@ -906,7 +934,7 @@ def process_spec(spec_file, action_name, action_arg):
 
     # Run the action
     log_raw("")
-    log_raw(f"**************** ACTION {action_name}")
+    log_raw(f"**************** ACTION: {action_name}")
 
     action.run(action_arg)
 
