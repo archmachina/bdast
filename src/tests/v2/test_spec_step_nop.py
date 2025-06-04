@@ -36,7 +36,7 @@ class TestProcessStepNop:
             bdast.bdast_v2.process_step_nop(None, {})
 
     def test_5(self):
-        action_state = bdast_v2.ActionState("test", None)
+        action_state = bdast_v2.ActionState("test", "")
 
         # Should allow null/None for nop implementation config
         bdast.bdast_v2.process_step_nop(action_state, None)
