@@ -28,10 +28,16 @@ class TestProcessStepNop:
 
         # Should fail on invalid configuration
         with pytest.raises(BdastArgumentException):
-            bdast.bdast_v2.process_step_nop(action_state, None)
+            bdast.bdast_v2.process_step_nop(action_state, "")
 
     def test_4(self):
         # Should fail on invalid action state
         with pytest.raises(BdastArgumentException):
             bdast.bdast_v2.process_step_nop(None, {})
+
+    def test_5(self):
+        action_state = bdast_v2.ActionState("test", None)
+
+        # Should allow null/None for nop implementation config
+        bdast.bdast_v2.process_step_nop(action_state, None)
 
