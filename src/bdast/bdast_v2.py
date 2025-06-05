@@ -667,19 +667,10 @@ class BdastAction:
         for step_id in active_step_map:
             step_obj = active_step_map[step_id]
 
-            # Convert any depends_on '+' references
-            for item in step_obj.depends_on.copy():
-                if item.startswith("+"):
-                    step_obj.depends_on.remove(item)
-                    step_obj.depends_on.add(item[1:] + ":end")
-
             # Add any 'after' references to 'depends_on', it the item exists
             # (after is a weak dependency - Only applies if the target step is going
             # to be run)
             for item in step_obj.after:
-                if item.startswith("+"):
-                    item = item[1:] + ":end"
-
                 if item in active_step_map:
                     # Make this step depend on the other step
                     step_obj.depends_on.add(item)
@@ -689,9 +680,6 @@ class BdastAction:
             # Convert a 'before' reference on this step to a 'depends_on'
             # reference on the referenced step
             for item in step_obj.before:
-                if item.startswith("+"):
-                    item = item[1:] + ":begin"
-
                 if item in active_step_map:
                     # Make the other step depend on this step
                     active_step_map[item].depends_on.add(step_id)
@@ -703,9 +691,6 @@ class BdastAction:
             # The target may not be in the active step map as required_by does not
             # include the referenced step.
             for item in step_obj.required_by:
-                if item.startswith("+"):
-                    item = item[1:] + ":begin"
-
                 if item in active_step_map:
                     # Make the other step depend on this step
                     active_step_map[item].depends_on.add(step_id)

@@ -170,6 +170,9 @@ actions:
   group_test:
     steps:
       - +setup
+      - name: Test
+        command:
+          cmd: echo test middle task
       - +build
       - +finish
 
