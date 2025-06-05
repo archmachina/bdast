@@ -60,13 +60,31 @@ steps:
           command:
             cmd: echo command 2
 
-  setup_task:
+  setup_task1:
     command:
-      cmd: echo in setup
+      cmd: echo in setup task 1
+    during:
+      - +setup
+
+  setup_task2:
+    command:
+      cmd: echo in setup task 2
+    during:
+      - +setup
+
+  build_task1:
+    during:
+      - +build
+    command:
+      cmd: echo in build task 1
     depends_on:
-      - "setup:begin"
-    required_by:
-      - "setup:end"
+      - build_task2
+
+  build_task2:
+    during:
+      - +build
+    command:
+      cmd: echo in build task 2
 
   +setup:
 
@@ -75,6 +93,8 @@ steps:
       - +setup
 
   +finish:
+    depends_on:
+      - +build
 
 actions:
   var_test:
