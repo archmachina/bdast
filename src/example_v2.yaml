@@ -10,6 +10,8 @@ vars:
   other: 2
 
 steps:
+  +build:
+
   nop_test:
     nop:
 
@@ -57,6 +59,42 @@ steps:
         - name: Command 2
           command:
             cmd: echo command 2
+
+  setup_task1:
+    command:
+      cmd: echo in setup task 1
+    during:
+      - +setup
+
+  setup_task2:
+    command:
+      cmd: echo in setup task 2
+    during:
+      - +setup
+
+  build_task1:
+    during:
+      - +build
+    command:
+      cmd: echo in build task 1
+    depends_on:
+      - build_task2
+
+  build_task2:
+    during:
+      - +build
+    command:
+      cmd: echo in build task 2
+
+  +setup:
+
+  +build:
+    depends_on:
+      - +setup
+
+  +finish:
+    depends_on:
+      - +build
 
 actions:
   var_test:
@@ -128,4 +166,13 @@ actions:
           cmd: echo this is unnamed
     vars:
       test: 1
+
+  group_test:
+    steps:
+      - +setup
+      - name: Test
+        command:
+          cmd: echo test middle task
+      - +build
+      - +finish
 

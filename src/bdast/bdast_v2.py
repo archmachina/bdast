@@ -413,22 +413,41 @@ class BdastStep:
         session = action_state.session
 
         if support_deps:
-            # Extract dependency properties
+            # Extract depends_on references
             self.depends_on = obslib.extract_property(step_def, "depends_on", on_missing=None)
             self.depends_on = session.resolve(self.depends_on, (list, type(None)), depth=0, on_none=[])
             self.depends_on = {session.resolve(x, str) for x in self.depends_on}
 
+            # Extract required_by references
             self.required_by = obslib.extract_property(step_def, "required_by", on_missing=None)
             self.required_by = session.resolve(self.required_by, (list, type(None)), depth=0, on_none=[])
             self.required_by = {session.resolve(x, str) for x in self.required_by}
 
+            # Extract before references
             self.before = obslib.extract_property(step_def, "before", on_missing=None)
             self.before = session.resolve(self.before, (list, type(None)), depth=0, on_none=[])
             self.before = {session.resolve(x, str) for x in self.before}
 
+            # Extract after references
             self.after = obslib.extract_property(step_def, "after", on_missing=None)
             self.after = session.resolve(self.after, (list, type(None)), depth=0, on_none=[])
             self.after = {session.resolve(x, str) for x in self.after}
+
+            # Extract during references
+            during = obslib.extract_property(step_def, "during", on_missing=None)
+            during = session.resolve(during, (list, type(None)), depth=0, on_none=[])
+            during = {session.resolve(x, str) for x in during}
+
+            for during_item in during:
+                val_run(during_item.startswith("+"), f"'during' item does not begin with '+': {during_item}")
+                self.depends_on.add(during_item[1:] + ":begin")
+                self.required_by.add(during_item[1:] + ":end")
+
+            # Convert all plus references
+            self._convert_plus_reference(self.depends_on, ":end")
+            self._convert_plus_reference(self.required_by, ":begin")
+            self._convert_plus_reference(self.before, ":begin")
+            self._convert_plus_reference(self.after, ":end")
 
         # Extract name
         self.name = obslib.extract_property(step_def, "name", on_missing=None)
@@ -462,6 +481,18 @@ class BdastStep:
 
         # Extract the implementation specific configuration
         self._impl_config = obslib.extract_property(step_def, self._step_type)
+
+    def _convert_plus_reference(self, items, suffix):
+
+        # Validate incoming arguments
+        val_arg(isinstance(items, set), "Invalid items passed to _convert_plus_reference")
+        val_arg(isinstance(suffix, str), "Invalid suffix passed to _convert_plus_reference")
+
+        # Convert '+' references
+        for item in items.copy():
+            if item.startswith("+"):
+                items.remove(item)
+                items.add(item[1:] + suffix)
 
     def run(self):
 
@@ -553,14 +584,37 @@ class BdastAction:
 
         # Copy known steps to the action state step library
         for step_id in self._steps:
-            new_step = BdastStep(self._steps[step_id], action_state)
+            if step_id.startswith("+"):
+                # New step names to create
+                begin_id = step_id[1:] + ":begin"
+                end_id = step_id[1:] + ":end"
 
-            # Use the step id as the name, if the step does not already
-            # have a name
-            if new_step.name is None or new_step.name == "":
-                new_step.name = step_id
+                # Create the begin and end steps
+                begin_step = BdastStep(self._steps[step_id], action_state)
+                begin_step.name = begin_id
 
-            action_state.step_library[step_id] = new_step
+                end_step = BdastStep(self._steps[step_id], action_state)
+                end_step.name = end_id
+                end_step.depends_on.add(begin_id)
+
+                # Make sure they are 'nop' type steps
+                val_load(
+                    begin_step._step_type == "nop" and end_step._step_type == "nop",
+                    f"Invalid step type for '+' step {step_id} - Must be 'nop'"
+                )
+
+                # Add the new begin and end steps to the step library
+                action_state.step_library[begin_id] = begin_step
+                action_state.step_library[end_id] = end_step
+            else:
+                new_step = BdastStep(self._steps[step_id], action_state)
+
+                # Use the step id as the name, if the step does not already
+                # have a name
+                if new_step.name is None or new_step.name == "":
+                    new_step.name = step_id
+
+                action_state.step_library[step_id] = new_step
 
         # Work with our own version of action steps
         action_steps = copy.deepcopy(self._action_steps)
@@ -568,6 +622,10 @@ class BdastAction:
         # Convert all inline step definitions to references to steps
         # in the step library
         action_steps = self._convert_inline_steps(action_state, action_steps)
+
+        # Convert "+" references to the begin and end steps that are created
+        # for it
+        action_steps = self._convert_plus_references(action_state, action_steps)
 
         # Validate the action steps list
         #   Make sure each item in action steps is a string
@@ -670,6 +728,24 @@ class BdastAction:
                 if step_id in other_item.required_by:
                     logger.debug("%s requires us", other_id)
                     step_queue.append(other_id)
+
+    def _convert_plus_references(self, action_state, action_steps):
+
+        # Validate incoming parameters
+        val_arg(isinstance(action_state, ActionState), "Invalid action state passed to _convert_plus_reference")
+        val_arg(isinstance(action_steps, list), "Invalid action steps passed to _convert_plus_reference")
+
+        # Convert any references to '+' steps to references to the
+        # begin and end
+        new_steps = []
+        for step_item in action_steps:
+            if step_item.startswith("+"):
+                new_steps.append(step_item[1:] + ":begin")
+                new_steps.append(step_item[1:] + ":end")
+            else:
+                new_steps.append(step_item)
+
+        return new_steps
 
     def _convert_inline_steps(self, action_state, action_steps):
 
@@ -824,6 +900,9 @@ class BdastSpec:
         spec_steps = obslib.extract_property(spec, "steps", on_missing=None)
         spec_steps = session.resolve(spec_steps, (dict, type(None)), depth=0, on_none={})
         for key in spec_steps:
+            # Regex validation for steps
+            val_load(re.fullmatch("[+]?[a-zA-Z0-9_-]+", key), f"Invalid characters in step id: {key}")
+
             spec_steps[key] = session.resolve(spec_steps[key], (dict, type(None)), depth=0, on_none={})
         self._steps.update(spec_steps)
 
