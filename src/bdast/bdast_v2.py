@@ -351,7 +351,7 @@ def process_step_vars(action_state, impl_config):
 
     # Extract steps to execute
     set_vars = obslib.extract_property(impl_config, "set", on_missing=None)
-    set_vars = action_state.session.resolve(set_vars, (dict, type(None)), depth=0, on_none={})
+    set_vars = action_state.session.resolve(set_vars, (dict, type(None)), on_none={})
 
     # Update vars for action state
     action_state.update_vars(set_vars)
