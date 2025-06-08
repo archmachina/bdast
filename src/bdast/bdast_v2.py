@@ -325,7 +325,7 @@ def process_step_block(action_state, impl_config):
 
     # Check incoming parameters
     val_arg(isinstance(action_state, ActionState), "Invalid ActionState passed to process_step_command")
-    val_arg(isinstance(impl_config, dict), "Invalid impl config passed to process_step_command")
+    val_arg(isinstance(impl_config, dict), "Invalid impl config passed to process_step_block")
 
     # Extract steps to execute
     steps = obslib.extract_property(impl_config, "steps", on_missing=None)
@@ -854,8 +854,16 @@ class BdastSpec:
             # Make sure we have a string-type include directive
             val_load(isinstance(file_glob, str), f"Invalid value in vars_file list. Must be string. Found {type(file_glob)}")
 
-            # Load include spec
-            matches = glob.glob(file_glob, recursive=True)
+            # Determine if this is a glob or regular path reference
+            if glob.escape(file_glob) == file_glob:
+                # There are no 'glob' type expansions in the file name, so this is
+                # just an explicit path reference
+                # If this an explicit path reference, then non-existance of the target is an error
+                matches = [file_glob]
+            else:
+                # Find matches based on the glob pattern
+                matches = glob.glob(file_glob, recursive=True)
+
             for match in matches:
                 with open(match, "r", encoding="utf-8") as file:
                     content = yaml.safe_load(file)
