@@ -9,3 +9,22 @@ include:
   - .bdast/common.yaml
   - .bdast/python.yaml
 
+steps:
+  python_test:
+    during:
+      - +test
+    command:
+      cmd: dfbar -f ./src/tests/Dockerfile ./src
+
+actions:
+
+  # Overrides for 'common' actions to perform actions
+  # specific to this repo
+
+  # Steps to perform when building from a git tag v*
+  push_tag_v:
+    steps:
+      - +build
+      - github_release
+      - pypi_release
+
