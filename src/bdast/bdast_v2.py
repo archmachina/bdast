@@ -94,12 +94,17 @@ def process_step_url(action_state, impl_config):
     store = obslib.extract_property(impl_config, "store", on_missing=None)
     store = action_state.session.resolve(store, (str, type(None)))
 
+    # Verify - whether to verify certificate for the endpoint
+    verify = obslib.extract_property(impl_config, "verify", on_missing=None)
+    verify = action_state.session.resolve(verify, (bool, type(None)), on_none=True)
+
     # Perform request
     args = {
         "method": method,
         "url": url,
         "timeout": (10, 30),
         "headers": headers,
+        "verify": verify
     }
 
     if body is not None:
