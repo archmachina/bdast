@@ -11,7 +11,7 @@ from bdast.exception import BdastRunException
 from bdast.exception import BdastLoadException
 from bdast.exception import BdastArgumentException
 
-class TestActionState:
+class TestIntActionState:
     def test_param1(self):
         # Check invalid action name
 

@@ -6,7 +6,7 @@ from bdast.exception import BdastRunException
 from bdast.exception import BdastLoadException
 from bdast.exception import BdastArgumentException
 
-class TestBdastStep:
+class TestIntBdastStep:
     def test_depends_on1(self):
         step_def = {
             "name": "test",

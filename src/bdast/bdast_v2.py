@@ -98,6 +98,16 @@ def process_step_url(action_state, impl_config):
     verify = obslib.extract_property(impl_config, "verify", on_missing=None)
     verify = action_state.session.resolve(verify, (bool, type(None)), on_none=True)
 
+    # status check - whether to check the response code from the endpoint
+    status_check = obslib.extract_property(impl_config, "status_check", on_missing=None)
+    status_check = action_state.session.resolve(status_check, (list, int, type(None)), on_none=None)
+
+    if isinstance(status_check, int):
+        status_check = [status_check]
+
+    if status_check is not None:
+        status_check = [action_state.session.resolve(x, int) for x in status_check]
+
     # Perform request
     args = {
         "method": method,
@@ -111,11 +121,16 @@ def process_step_url(action_state, impl_config):
         args["data"] = body
 
     response = requests.request(**args)
-    response.raise_for_status()
 
-    logger.info("Request successful")
     logger.debug("Response code: %s", response.status_code)
     logger.debug("Response text: %s", response.text)
+
+    if status_check is None:
+        # Use default handling for response codes
+        response.raise_for_status()
+    else:
+        if response.status_code not in status_check:
+            raise BdastRunException("Status code (%s) not in %s", response.status_code, status_check)
 
     # Only store result if requested
     if store is not None and store != "":

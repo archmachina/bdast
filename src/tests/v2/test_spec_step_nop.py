@@ -6,7 +6,7 @@ from bdast.exception import BdastRunException
 from bdast.exception import BdastLoadException
 from bdast.exception import BdastArgumentException
 
-class TestProcessStepNop:
+class TestSpecStepNop:
     def test_1(self):
         action_state = bdast_v2.ActionState("test", "")
 
