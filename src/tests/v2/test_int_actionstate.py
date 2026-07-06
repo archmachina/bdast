@@ -1,4 +1,3 @@
-
 import pytest
 import os
 import bdast
@@ -10,6 +9,7 @@ from bdast.bdast_v2 import ActionState
 from bdast.exception import BdastRunException
 from bdast.exception import BdastLoadException
 from bdast.exception import BdastArgumentException
+
 
 class TestIntActionState:
     def test_param1(self):
@@ -128,6 +128,7 @@ class TestIntActionState:
         # Make sure env looks correct
         assert action_state.session.resolve("{{ env.TESTER4 }}") == "OTHER4"
 
+
 # TODO testing
 # obslib session
 # obslib ignoring env vars
@@ -136,4 +137,3 @@ class TestIntActionState:
 # Unresolvable var references
 # Circular var references
 # Indirect var reference
-
