@@ -1,7 +1,7 @@
-
 import sys
 import bdast
 import pytest
+
 
 class TestCli:
     def test_1(self):
@@ -23,4 +23,3 @@ class TestCli:
         res = bdast.cli.process_args()
 
         assert res == 0
-

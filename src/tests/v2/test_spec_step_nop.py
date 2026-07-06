@@ -1,10 +1,10 @@
-
 import pytest
 import bdast
 from bdast import bdast_v2
 from bdast.exception import BdastRunException
 from bdast.exception import BdastLoadException
 from bdast.exception import BdastArgumentException
+
 
 class TestSpecStepNop:
     def test_1(self):
@@ -19,9 +19,7 @@ class TestSpecStepNop:
 
         # Should fail on unknown keys
         with pytest.raises(BdastRunException):
-            bdast.bdast_v2.process_step_nop(action_state, {
-                "test": 1
-            })
+            bdast.bdast_v2.process_step_nop(action_state, {"test": 1})
 
     def test_3(self):
         action_state = bdast_v2.ActionState("test", "")
@@ -40,4 +38,3 @@ class TestSpecStepNop:
 
         # Should allow null/None for nop implementation config
         bdast.bdast_v2.process_step_nop(action_state, None)
-

@@ -61,7 +61,9 @@ def load_spec(spec_file, action_name, action_arg):
         raise SpecLoadException("Specification filename missing")
 
     if not os.path.isfile(spec_file):
-        raise SpecLoadException(f"Spec file does not exist or is not a file: {spec_file}")
+        raise SpecLoadException(
+            f"Spec file does not exist or is not a file: {spec_file}"
+        )
 
     # Convert to an absolute path
     spec_file = os.path.abspath(spec_file)

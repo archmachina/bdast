@@ -1,5 +1,4 @@
-"""
-"""
+""" """
 
 import logging
 import os
@@ -508,7 +507,6 @@ def process_spec_step(step_name, step, state):
 
         dep_ref = state.common.spec["steps"][dep_name]
         process_spec_step(dep_name, dep_ref, parent_state)
-
 
     # Dependencies may have captured a var, so merge parent vars in to a new scope state
     state = ScopeState(parent=parent_state)
